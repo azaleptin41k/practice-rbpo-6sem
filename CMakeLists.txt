@@ -1,5 +1,10 @@
 cmake_minimum_required(VERSION 3.20)
-project(rbpo-app VERSION 1.0 LANGUAGES CXX)
+
+if(NOT WIN32)
+  message(FATAL_ERROR "RbpoTrayZad2 builds only on Windows (MIDL + service).")
+endif()
+
+project(RbpoTrayZad2 VERSION 1.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -10,7 +15,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(ICON_PNG "${CMAKE_SOURCE_DIR}/logo.png")
 set(ICON_ICO "${CMAKE_SOURCE_DIR}/src/logo.ico")
 
-if(WIN32 AND EXISTS "${ICON_PNG}" AND NOT EXISTS "${ICON_ICO}")
+if(EXISTS "${ICON_PNG}" AND NOT EXISTS "${ICON_ICO}")
   message(STATUS "Converting logo.png -> src/logo.ico ...")
   execute_process(
     COMMAND powershell -ExecutionPolicy Bypass
@@ -26,18 +31,82 @@ if(WIN32 AND EXISTS "${ICON_PNG}" AND NOT EXISTS "${ICON_ICO}")
 endif()
 
 # ---------------------------------------------------------------------------
-# Application target
+# MIDL — RPC stubs
 # ---------------------------------------------------------------------------
-add_executable(${PROJECT_NAME} WIN32
-  src/main.cpp
-  src/app.rc
+set(RPC_GEN_DIR "${CMAKE_CURRENT_BINARY_DIR}/rpc_gen")
+
+add_custom_command(
+  OUTPUT
+    ${RPC_GEN_DIR}/TrayRpc_h.h
+    ${RPC_GEN_DIR}/TrayRpc_s.c
+    ${RPC_GEN_DIR}/TrayRpc_c.c
+  COMMAND ${CMAKE_COMMAND} -E make_directory ${RPC_GEN_DIR}
+  COMMAND midl
+    /nologo
+    /win64
+    /W1
+    /h TrayRpc_h.h
+    /c TrayRpc_c.c
+    /s TrayRpc_s.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/idl/TrayRpc.idl
+  DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/idl/TrayRpc.idl
+  WORKING_DIRECTORY ${RPC_GEN_DIR}
+  COMMENT "MIDL TrayRpc.idl"
 )
 
-target_include_directories(${PROJECT_NAME} PRIVATE src)
+# ---------------------------------------------------------------------------
+# Tray GUI (same artifact name as zad-1: rbpo-app.exe)
+# ---------------------------------------------------------------------------
+add_executable(rbpo-app WIN32
+  src/main.cpp
+  src/app.rc
+  ${RPC_GEN_DIR}/TrayRpc_c.c
+)
 
-target_compile_definitions(${PROJECT_NAME} PRIVATE UNICODE _UNICODE)
+target_include_directories(rbpo-app PRIVATE
+  ${CMAKE_SOURCE_DIR}/src
+  ${CMAKE_SOURCE_DIR}/include
+  ${RPC_GEN_DIR}
+)
 
-# UTF-8 source and execution character set (for Cyrillic strings)
-target_compile_options(${PROJECT_NAME} PRIVATE $<$<CXX_COMPILER_ID:MSVC>:/utf-8>)
+target_compile_definitions(rbpo-app PRIVATE UNICODE _UNICODE)
 
-target_link_libraries(${PROJECT_NAME} PRIVATE shell32)
+target_compile_options(rbpo-app PRIVATE $<$<CXX_COMPILER_ID:MSVC>:/utf-8>)
+
+target_link_libraries(rbpo-app PRIVATE
+  shell32
+  user32
+  gdi32
+  advapi32
+  rpcrt4
+)
+
+# ---------------------------------------------------------------------------
+# Windows service
+# ---------------------------------------------------------------------------
+add_executable(TraySvc
+  src/service_main.cpp
+  ${RPC_GEN_DIR}/TrayRpc_s.c
+)
+
+set_target_properties(TraySvc PROPERTIES WIN32_EXECUTABLE FALSE)
+
+target_include_directories(TraySvc PRIVATE
+  ${CMAKE_SOURCE_DIR}/include
+  ${RPC_GEN_DIR}
+)
+
+target_compile_definitions(TraySvc PRIVATE UNICODE _UNICODE)
+
+target_link_libraries(TraySvc PRIVATE
+  advapi32
+  wtsapi32
+  userenv
+  rpcrt4
+  user32
+)
+
+if(MSVC)
+  set_property(TARGET rbpo-app PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+  set_property(TARGET TraySvc PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+endif()

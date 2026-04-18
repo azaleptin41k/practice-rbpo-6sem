@@ -1,8 +1,8 @@
 /**
- * РБПО — Tray Application
+ * РБПО — Tray Application (zad-2)
  *
- * Win32 API application with system tray icon support,
- * single-instance enforcement, and background operation.
+ * Win32 tray + Windows service integration: RPC stop, parent checks.
+ * GUI aligned with zad-1 (resources, --silent).
  */
 
 #define WIN32_LEAN_AND_MEAN
@@ -10,14 +10,20 @@
 
 #include <windows.h>
 #include <shellapi.h>
+#include <tlhelp32.h>
+
 #include "resource.h"
+#include "tray_config.h"
+#include "TrayRpc_h.h"
+
+#pragma comment(lib, "advapi32.lib")
+#pragma comment(lib, "rpcrt4.lib")
 
 // ---------------------------------------------------------------------------
-// Constants
+// Constants (zad-1 UI)
 // ---------------------------------------------------------------------------
-static const wchar_t APP_MUTEX_NAME[] = L"Local\\RBPO_TrayApp_SingleInstance";
-static const wchar_t WINDOW_CLASS[]   = L"RBPOTrayAppClass";
-static const wchar_t WINDOW_TITLE[]   = L"РБПО — Tray Application";
+static const wchar_t WINDOW_CLASS[] = L"RBPOTrayAppClass";
+static const wchar_t WINDOW_TITLE[] = L"РБПО — Tray Application (zad-2)";
 
 // ---------------------------------------------------------------------------
 // Globals
@@ -38,24 +44,179 @@ static void ShowTrayContextMenu(HWND hWnd);
 static void ShowMainWindow();
 static void HideMainWindow();
 
+static DWORD GetParentProcessId();
+static bool QueryServiceProcessId(DWORD* outPid);
+static void BootstrapStartServiceIfStopped();
+static void RequireParentIsTrayService();
+static void StopServiceThroughRpc();
+
+// ===========================================================================
+// Service helpers (zad-2)
+// ===========================================================================
+
+static DWORD GetParentProcessId() {
+  const DWORD self = GetCurrentProcessId();
+  DWORD parent = 0;
+  HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+  if (snap == INVALID_HANDLE_VALUE) {
+    return 0;
+  }
+  PROCESSENTRY32W pe{};
+  pe.dwSize = sizeof(pe);
+  if (Process32FirstW(snap, &pe)) {
+    do {
+      if (pe.th32ProcessID == self) {
+        parent = pe.th32ParentProcessID;
+        break;
+      }
+    } while (Process32NextW(snap, &pe));
+  }
+  CloseHandle(snap);
+  return parent;
+}
+
+static bool QueryServiceProcessId(DWORD* outPid) {
+  *outPid = 0;
+  SC_HANDLE scm = OpenSCManagerW(nullptr, nullptr, SC_MANAGER_CONNECT);
+  if (!scm) {
+    return false;
+  }
+  SC_HANDLE svc = OpenServiceW(scm, TRAY_SERVICE_NAME, SERVICE_QUERY_STATUS);
+  CloseServiceHandle(scm);
+  if (!svc) {
+    return false;
+  }
+  SERVICE_STATUS_PROCESS ssp{};
+  DWORD bytes = 0;
+  const BOOL ok = QueryServiceStatusEx(
+      svc,
+      SC_STATUS_PROCESS_INFO,
+      reinterpret_cast<LPBYTE>(&ssp),
+      sizeof(ssp),
+      &bytes);
+  CloseServiceHandle(svc);
+  if (!ok) {
+    return false;
+  }
+  *outPid = ssp.dwProcessId;
+  return true;
+}
+
+static void BootstrapStartServiceIfStopped() {
+  SC_HANDLE scm = OpenSCManagerW(nullptr, nullptr, SC_MANAGER_CONNECT);
+  if (!scm) {
+    ExitProcess(0);
+  }
+  SC_HANDLE svc = OpenServiceW(scm, TRAY_SERVICE_NAME, SERVICE_QUERY_STATUS | SERVICE_START);
+  CloseServiceHandle(scm);
+  if (!svc) {
+    ExitProcess(0);
+  }
+
+  SERVICE_STATUS_PROCESS ssp{};
+  DWORD bytes = 0;
+  if (!QueryServiceStatusEx(
+          svc,
+          SC_STATUS_PROCESS_INFO,
+          reinterpret_cast<LPBYTE>(&ssp),
+          sizeof(ssp),
+          &bytes)) {
+    CloseServiceHandle(svc);
+    ExitProcess(0);
+  }
+
+  if (ssp.dwCurrentState == SERVICE_STOPPED) {
+    if (!StartServiceW(svc, 0, nullptr)) {
+      CloseServiceHandle(svc);
+      ExitProcess(0);
+    }
+    const DWORD deadline = GetTickCount() + 120000;
+    for (;;) {
+      if (!QueryServiceStatusEx(
+              svc,
+              SC_STATUS_PROCESS_INFO,
+              reinterpret_cast<LPBYTE>(&ssp),
+              sizeof(ssp),
+              &bytes)) {
+        CloseServiceHandle(svc);
+        ExitProcess(0);
+      }
+      if (ssp.dwCurrentState == SERVICE_RUNNING) {
+        CloseServiceHandle(svc);
+        ExitProcess(0);
+      }
+      if (GetTickCount() >= deadline) {
+        CloseServiceHandle(svc);
+        ExitProcess(0);
+      }
+      Sleep(200);
+    }
+  }
+
+  CloseServiceHandle(svc);
+}
+
+static void RequireParentIsTrayService() {
+  DWORD servicePid = 0;
+  if (!QueryServiceProcessId(&servicePid) || servicePid == 0) {
+    ExitProcess(0);
+  }
+  const DWORD parentPid = GetParentProcessId();
+  if (parentPid == 0 || parentPid != servicePid) {
+    ExitProcess(0);
+  }
+}
+
+static void StopServiceThroughRpc() {
+  RPC_WSTR stringBinding = nullptr;
+  RpcStringBindingComposeW(
+      nullptr,
+      reinterpret_cast<RPC_WSTR>(L"ncalrpc"),
+      nullptr,
+      reinterpret_cast<RPC_WSTR>(const_cast<wchar_t*>(TRAY_RPC_ENDPOINT)),
+      nullptr,
+      &stringBinding);
+
+  handle_t binding = nullptr;
+  if (stringBinding) {
+    if (RpcBindingFromStringBindingW(stringBinding, &binding) != RPC_S_OK) {
+      binding = nullptr;
+    }
+    RpcStringFreeW(&stringBinding);
+  }
+
+  if (!binding) {
+    return;
+  }
+
+  RpcTryExcept {
+    RequestStop(binding);
+  }
+  RpcExcept(1) {
+  }
+  RpcEndExcept
+
+  RpcBindingFree(&binding);
+}
+
 // ===========================================================================
 // Entry point
 // ===========================================================================
 int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR pCmdLine, int)
 {
-    // --- Requirement 10: single-instance check via named mutex --------------
-    g_hMutex = CreateMutexW(nullptr, TRUE, APP_MUTEX_NAME);
+    g_hMutex = CreateMutexW(nullptr, TRUE, TRAY_MUTEX_NAME);
     if (GetLastError() == ERROR_ALREADY_EXISTS) {
         if (g_hMutex) CloseHandle(g_hMutex);
-        return 0;   // exit BEFORE creating the tray icon
+        return 0;
     }
+
+    BootstrapStartServiceIfStopped();
+    RequireParentIsTrayService();
 
     g_hInstance = hInstance;
 
-    // --- Requirement 6: register for taskbar-recreation message -------------
     WM_TASKBARCREATED = RegisterWindowMessageW(L"TaskbarCreated");
 
-    // --- Register window class ----------------------------------------------
     WNDCLASSEXW wc  = {};
     wc.cbSize        = sizeof(wc);
     wc.style         = CS_HREDRAW | CS_VREDRAW;
@@ -76,7 +237,6 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR pCmdLine, int)
         return 1;
     }
 
-    // --- Create the main window (initially hidden) --------------------------
     g_hWnd = CreateWindowExW(
         0, WINDOW_CLASS, WINDOW_TITLE,
         WS_OVERLAPPEDWINDOW,
@@ -88,23 +248,19 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR pCmdLine, int)
         return 1;
     }
 
-    // --- Requirement 1: add tray icon at startup ----------------------------
     AddTrayIcon(g_hWnd);
 
-    // --- Requirement 7: support hidden launch (--silent flag) ---------------
     bool startSilent = pCmdLine && wcsstr(pCmdLine, L"--silent");
     if (!startSilent) {
         ShowMainWindow();
     }
 
-    // --- Message loop -------------------------------------------------------
     MSG msg;
     while (GetMessageW(&msg, nullptr, 0, 0)) {
         TranslateMessage(&msg);
         DispatchMessageW(&msg);
     }
 
-    // --- Cleanup ------------------------------------------------------------
     RemoveTrayIcon();
     ReleaseMutex(g_hMutex);
     CloseHandle(g_hMutex);
@@ -117,7 +273,6 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR pCmdLine, int)
 // ===========================================================================
 LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 {
-    // --- Requirement 6: re-add tray icon when taskbar is recreated ----------
     if (message == WM_TASKBARCREATED) {
         AddTrayIcon(hWnd);
         return 0;
@@ -125,44 +280,34 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 
     switch (message) {
 
-    // --- Tray icon callback -------------------------------------------------
     case WM_TRAYICON:
         switch (LOWORD(lParam)) {
         case WM_LBUTTONUP:
-            // Requirement 2: left-click on tray icon → show main window
             ShowMainWindow();
             break;
         case WM_RBUTTONUP:
-            // Requirement 3: right-click on tray icon → context menu
             ShowTrayContextMenu(hWnd);
             break;
         }
         return 0;
 
-    // --- Menu commands ------------------------------------------------------
     case WM_COMMAND:
         switch (LOWORD(wParam)) {
         case ID_TRAY_OPEN:
-            // Requirement 4: "Открыть" → show main window
             ShowMainWindow();
             break;
         case ID_TRAY_EXIT:
-            // Requirement 5: "Выход" in tray menu → exit
-            DestroyWindow(hWnd);
-            break;
         case ID_FILE_EXIT:
-            // Requirement 9: Файл → Выход → exit
-            DestroyWindow(hWnd);
-            break;
+            RemoveTrayIcon();
+            StopServiceThroughRpc();
+            return 0;
         }
         return 0;
 
-    // --- Requirement 8: closing the window hides it -------------------------
     case WM_CLOSE:
         HideMainWindow();
         return 0;
 
-    // --- Create static label inside the window ------------------------------
     case WM_CREATE: {
         HFONT hFont = CreateFontW(
             20, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
@@ -179,12 +324,10 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
         if (hFont && hLabel)
             SendMessageW(hLabel, WM_SETFONT, (WPARAM)hFont, TRUE);
 
-        // Store label handle for resizing
         SetWindowLongPtrW(hWnd, GWLP_USERDATA, (LONG_PTR)hLabel);
         return 0;
     }
 
-    // --- Keep label centered ------------------------------------------------
     case WM_SIZE: {
         HWND hLabel = (HWND)GetWindowLongPtrW(hWnd, GWLP_USERDATA);
         if (hLabel) {
@@ -207,7 +350,6 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 // Tray icon helpers
 // ===========================================================================
 
-// Requirement 1 & 6: add (or re-add) the notification-area icon
 static void AddTrayIcon(HWND hWnd)
 {
     g_nid.cbSize            = sizeof(g_nid);
@@ -218,7 +360,7 @@ static void AddTrayIcon(HWND hWnd)
     g_nid.hIcon             = LoadIconW(g_hInstance, MAKEINTRESOURCEW(IDI_APPICON));
     if (!g_nid.hIcon)
         g_nid.hIcon = LoadIconW(nullptr, IDI_APPLICATION);
-    wcscpy_s(g_nid.szTip, L"РБПО Tray Application");
+    wcscpy_s(g_nid.szTip, L"РБПО Tray — zad-2");
 
     Shell_NotifyIconW(NIM_ADD, &g_nid);
 }
@@ -228,7 +370,6 @@ static void RemoveTrayIcon()
     Shell_NotifyIconW(NIM_DELETE, &g_nid);
 }
 
-// Requirement 3, 4, 5: tray context menu
 static void ShowTrayContextMenu(HWND hWnd)
 {
     POINT pt;
@@ -247,7 +388,6 @@ static void ShowTrayContextMenu(HWND hWnd)
     DestroyMenu(hMenu);
 }
 
-// Requirement 2, 4, 7: show the main window
 static void ShowMainWindow()
 {
     ShowWindow(g_hWnd, SW_SHOW);
@@ -255,7 +395,6 @@ static void ShowMainWindow()
     SetForegroundWindow(g_hWnd);
 }
 
-// Requirement 8: hide the main window (app continues in tray)
 static void HideMainWindow()
 {
     ShowWindow(g_hWnd, SW_HIDE);

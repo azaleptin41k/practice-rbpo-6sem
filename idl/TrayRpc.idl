@@ -1,0 +1,9 @@
+[
+    uuid(8b4e7c3b-5a1f-4b2e-9c11-0f3e8d7a6b05),
+    version(1.0),
+    pointer_default(unique)
+]
+interface TrayRpc
+{
+    void RequestStop([in] handle_t hBinding);
+}

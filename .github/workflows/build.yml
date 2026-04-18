@@ -2,7 +2,7 @@ name: build
 
 on:
   push:
-    branches: [main, zad-1]
+    branches: [main, zad-1, zad-2]
   pull_request:
     branches: [main]
 
@@ -18,8 +18,10 @@ jobs:
       - name: Build Release
         run: cmake --build build --config Release
 
-      - name: Upload executable
+      - name: Upload binaries
         uses: actions/upload-artifact@v4
         with:
-          name: rbpo-app-Release
-          path: build/Release/rbpo-app.exe
+          name: rbpo-zad2-Release
+          path: |
+            build/Release/rbpo-app.exe
+            build/Release/TraySvc.exe
