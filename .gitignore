@@ -1,5 +1,9 @@
 build/
 out/
-CMakeUserPresets.json
+.idea/
 .vs/
 *.user
+CMakeUserPresets.json
+CMakeSettings.json
+src/logo.ico
+logo.svg
