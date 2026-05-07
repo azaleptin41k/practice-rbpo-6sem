@@ -46,8 +46,8 @@ add_custom_command(
     /win64
     /W1
     /h TrayRpc_h.h
-    /c TrayRpc_c.c
-    /s TrayRpc_s.c
+    /cstub TrayRpc_c.c
+    /sstub TrayRpc_s.c
     ${CMAKE_CURRENT_SOURCE_DIR}/idl/TrayRpc.idl
   DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/idl/TrayRpc.idl
   WORKING_DIRECTORY ${RPC_GEN_DIR}
