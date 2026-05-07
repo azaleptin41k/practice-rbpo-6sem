@@ -189,26 +189,26 @@ static void StopServiceThroughRpc() {
       nullptr,
       &stringBinding);
 
-  handle_t binding = nullptr;
+  hTrayRpcBinding = nullptr;
   if (stringBinding) {
-    if (RpcBindingFromStringBindingW(stringBinding, &binding) != RPC_S_OK) {
-      binding = nullptr;
+    if (RpcBindingFromStringBindingW(stringBinding, &hTrayRpcBinding) != RPC_S_OK) {
+      hTrayRpcBinding = nullptr;
     }
     RpcStringFreeW(&stringBinding);
   }
 
-  if (!binding) {
+  if (!hTrayRpcBinding) {
     return;
   }
 
   RpcTryExcept {
-    RequestStop(binding);
+    RequestStop();
   }
   RpcExcept(1) {
   }
   RpcEndExcept
 
-  RpcBindingFree(&binding);
+  RpcBindingFree(&hTrayRpcBinding);
 }
 
 // ===========================================================================

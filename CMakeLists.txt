@@ -46,6 +46,7 @@ if(NOT MIDL_COMPILER)
 endif()
 
 set(IDL_FILE "${CMAKE_SOURCE_DIR}/idl/TrayRpc.idl")
+set(ACF_FILE "${CMAKE_SOURCE_DIR}/idl/TrayRpc.acf")
 set(RPC_GEN_DIR "${CMAKE_BINARY_DIR}/rpc_gen")
 file(MAKE_DIRECTORY "${RPC_GEN_DIR}")
 
@@ -56,6 +57,7 @@ set(RPC_SERVER "${RPC_GEN_DIR}/TrayRpc_s.c")
 add_custom_command(
   OUTPUT "${RPC_HEADER}" "${RPC_CLIENT}" "${RPC_SERVER}"
   COMMAND "${MIDL_COMPILER}"
+    /acf "${ACF_FILE}"
     /nologo
     /win64
     /W1
@@ -63,7 +65,7 @@ add_custom_command(
     /cstub TrayRpc_c.c
     /sstub TrayRpc_s.c
     "${IDL_FILE}"
-  DEPENDS "${IDL_FILE}"
+  DEPENDS "${IDL_FILE}" "${ACF_FILE}"
   WORKING_DIRECTORY "${RPC_GEN_DIR}"
   COMMENT "Running MIDL compiler on TrayRpc.idl"
 )

@@ -5,5 +5,5 @@
 ]
 interface TrayRpc
 {
-    void RequestStop([in] handle_t hBinding);
+    void RequestStop();
 }
