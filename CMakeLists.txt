@@ -31,45 +31,60 @@ if(EXISTS "${ICON_PNG}" AND NOT EXISTS "${ICON_ICO}")
 endif()
 
 # ---------------------------------------------------------------------------
-# MIDL — RPC stubs
+# MIDL — RPC stubs 
 # ---------------------------------------------------------------------------
-set(RPC_GEN_DIR "${CMAKE_CURRENT_BINARY_DIR}/rpc_gen")
+find_program(MIDL_COMPILER midl)
+if(NOT MIDL_COMPILER)
+  file(GLOB _SDK_BIN_DIRS
+    "C:/Program Files (x86)/Windows Kits/10/bin/10.*/x64"
+    "C:/Program Files (x86)/Windows Kits/10/bin/x64"
+  )
+  find_program(MIDL_COMPILER midl PATHS ${_SDK_BIN_DIRS})
+endif()
+if(NOT MIDL_COMPILER)
+  message(FATAL_ERROR "MIDL compiler not found. Install the Windows SDK.")
+endif()
 
-set(RPC_STUB_CLIENT ${RPC_GEN_DIR}/TrayRpc_c.c)
-set(RPC_STUB_SERVER ${RPC_GEN_DIR}/TrayRpc_s.c)
+set(IDL_FILE "${CMAKE_SOURCE_DIR}/idl/TrayRpc.idl")
+set(RPC_GEN_DIR "${CMAKE_BINARY_DIR}/rpc_gen")
+file(MAKE_DIRECTORY "${RPC_GEN_DIR}")
+
+set(RPC_HEADER "${RPC_GEN_DIR}/TrayRpc_h.h")
+set(RPC_CLIENT "${RPC_GEN_DIR}/TrayRpc_c.c")
+set(RPC_SERVER "${RPC_GEN_DIR}/TrayRpc_s.c")
 
 add_custom_command(
-  OUTPUT
-    ${RPC_GEN_DIR}/TrayRpc_h.h
-    ${RPC_STUB_SERVER}
-    ${RPC_STUB_CLIENT}
-  COMMAND ${CMAKE_COMMAND} -E make_directory ${RPC_GEN_DIR}
-  COMMAND midl
+  OUTPUT "${RPC_HEADER}" "${RPC_CLIENT}" "${RPC_SERVER}"
+  COMMAND "${MIDL_COMPILER}"
     /nologo
     /win64
     /W1
     /h TrayRpc_h.h
     /cstub TrayRpc_c.c
     /sstub TrayRpc_s.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/idl/TrayRpc.idl
-  DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/idl/TrayRpc.idl
-  WORKING_DIRECTORY ${RPC_GEN_DIR}
-  COMMENT "MIDL TrayRpc.idl"
+    "${IDL_FILE}"
+  DEPENDS "${IDL_FILE}"
+  WORKING_DIRECTORY "${RPC_GEN_DIR}"
+  COMMENT "Running MIDL compiler on TrayRpc.idl"
 )
 
+add_custom_target(rpc_stubs DEPENDS "${RPC_HEADER}" "${RPC_CLIENT}" "${RPC_SERVER}")
+
 # ---------------------------------------------------------------------------
-# Tray GUI (same artifact name as zad-1: rbpo-app.exe)
+# Tray GUI — rbpo-app.exe (как zad-1)
 # ---------------------------------------------------------------------------
 add_executable(rbpo-app WIN32
   src/main.cpp
   src/app.rc
-  ${RPC_STUB_CLIENT}
+  "${RPC_CLIENT}"
 )
+
+add_dependencies(rbpo-app rpc_stubs)
 
 target_include_directories(rbpo-app PRIVATE
   ${CMAKE_SOURCE_DIR}/src
   ${CMAKE_SOURCE_DIR}/include
-  ${RPC_GEN_DIR}
+  "${RPC_GEN_DIR}"
 )
 
 target_compile_definitions(rbpo-app PRIVATE UNICODE _UNICODE)
@@ -84,25 +99,26 @@ target_link_libraries(rbpo-app PRIVATE
   rpcrt4
 )
 
+set_source_files_properties("${RPC_CLIENT}" PROPERTIES GENERATED TRUE LANGUAGE C)
+
 # ---------------------------------------------------------------------------
-# Windows service
+# Windows service — TraySvc.exe
 # ---------------------------------------------------------------------------
 add_executable(TraySvc
   src/service_main.cpp
-  ${RPC_STUB_SERVER}
+  "${RPC_SERVER}"
 )
 
-set_source_files_properties(${RPC_STUB_CLIENT} ${RPC_STUB_SERVER}
-  PROPERTIES GENERATED TRUE LANGUAGE C)
-
-set_target_properties(TraySvc PROPERTIES WIN32_EXECUTABLE FALSE)
+add_dependencies(TraySvc rpc_stubs)
 
 target_include_directories(TraySvc PRIVATE
   ${CMAKE_SOURCE_DIR}/include
-  ${RPC_GEN_DIR}
+  "${RPC_GEN_DIR}"
 )
 
 target_compile_definitions(TraySvc PRIVATE UNICODE _UNICODE)
+
+target_compile_options(TraySvc PRIVATE $<$<CXX_COMPILER_ID:MSVC>:/utf-8>)
 
 target_link_libraries(TraySvc PRIVATE
   advapi32
@@ -111,6 +127,10 @@ target_link_libraries(TraySvc PRIVATE
   rpcrt4
   user32
 )
+
+set_source_files_properties("${RPC_SERVER}" PROPERTIES GENERATED TRUE LANGUAGE C)
+
+set_target_properties(TraySvc PROPERTIES WIN32_EXECUTABLE FALSE)
 
 if(MSVC)
   set_property(TARGET rbpo-app PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
