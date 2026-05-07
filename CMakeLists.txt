@@ -35,11 +35,14 @@ endif()
 # ---------------------------------------------------------------------------
 set(RPC_GEN_DIR "${CMAKE_CURRENT_BINARY_DIR}/rpc_gen")
 
+set(RPC_STUB_CLIENT ${RPC_GEN_DIR}/TrayRpc_c.c)
+set(RPC_STUB_SERVER ${RPC_GEN_DIR}/TrayRpc_s.c)
+
 add_custom_command(
   OUTPUT
     ${RPC_GEN_DIR}/TrayRpc_h.h
-    ${RPC_GEN_DIR}/TrayRpc_s.c
-    ${RPC_GEN_DIR}/TrayRpc_c.c
+    ${RPC_STUB_SERVER}
+    ${RPC_STUB_CLIENT}
   COMMAND ${CMAKE_COMMAND} -E make_directory ${RPC_GEN_DIR}
   COMMAND midl
     /nologo
@@ -60,7 +63,7 @@ add_custom_command(
 add_executable(rbpo-app WIN32
   src/main.cpp
   src/app.rc
-  ${RPC_GEN_DIR}/TrayRpc_c.c
+  ${RPC_STUB_CLIENT}
 )
 
 target_include_directories(rbpo-app PRIVATE
@@ -86,8 +89,11 @@ target_link_libraries(rbpo-app PRIVATE
 # ---------------------------------------------------------------------------
 add_executable(TraySvc
   src/service_main.cpp
-  ${RPC_GEN_DIR}/TrayRpc_s.c
+  ${RPC_STUB_SERVER}
 )
+
+set_source_files_properties(${RPC_STUB_CLIENT} ${RPC_STUB_SERVER}
+  PROPERTIES GENERATED TRUE LANGUAGE C)
 
 set_target_properties(TraySvc PROPERTIES WIN32_EXECUTABLE FALSE)
 
