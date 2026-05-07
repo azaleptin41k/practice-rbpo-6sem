@@ -11,10 +11,22 @@
 #include <windows.h>
 #include <shellapi.h>
 #include <tlhelp32.h>
+#include <cstdlib>
 
 #include "resource.h"
 #include "tray_config.h"
+
+extern "C" {
 #include "TrayRpc_h.h"
+}
+
+extern "C" void* __RPC_USER midl_user_allocate(size_t size) {
+  return std::malloc(size);
+}
+
+extern "C" void __RPC_USER midl_user_free(void* p) {
+  std::free(p);
+}
 
 #pragma comment(lib, "advapi32.lib")
 #pragma comment(lib, "rpcrt4.lib")

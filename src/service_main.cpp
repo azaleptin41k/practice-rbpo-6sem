@@ -5,8 +5,13 @@
 #define _UNICODE
 #endif
 
+#ifndef _WIN32_WINNT
+#define _WIN32_WINNT 0x0601
+#endif
+
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
+#include <rpc.h>
 #include <wtsapi32.h>
 #include <userenv.h>
 
@@ -19,6 +24,14 @@
 #pragma comment(lib, "wtsapi32.lib")
 #pragma comment(lib, "userenv.lib")
 #pragma comment(lib, "rpcrt4.lib")
+
+#ifndef WTS_REMOTE_SESSION_LOGON
+#define WTS_REMOTE_SESSION_LOGON 6
+#endif
+
+#ifndef RPC_IF_ALLOW_CALLBACKS_WITH_NULL_AUTH
+#define RPC_IF_ALLOW_CALLBACKS_WITH_NULL_AUTH 0x80
+#endif
 
 static HANDLE g_stopEvent = nullptr;
 
@@ -239,7 +252,7 @@ void WINAPI ServiceMain(DWORD /*argc*/, LPWSTR* /*argv*/) {
 
   HANDLE rpcThread = CreateThread(nullptr, 0, RpcListenThread, nullptr, 0, nullptr);
   if (!rpcThread) {
-    RpcServerUnregisterIf(nullptr, TrayRpc_v1_0_s_ifspec, nullptr);
+    RpcServerUnregisterIf(TrayRpc_v1_0_s_ifspec, nullptr, 0);
     Report(SERVICE_STOPPED, GetLastError());
     CloseHandle(g_stopEvent);
     DeleteCriticalSection(&g_childLock);
@@ -257,7 +270,7 @@ void WINAPI ServiceMain(DWORD /*argc*/, LPWSTR* /*argv*/) {
   WaitForSingleObject(rpcThread, INFINITE);
   CloseHandle(rpcThread);
 
-  RpcServerUnregisterIf(nullptr, TrayRpc_v1_0_s_ifspec, nullptr);
+  RpcServerUnregisterIf(TrayRpc_v1_0_s_ifspec, nullptr, 0);
 
   TerminateAllChildren();
 
