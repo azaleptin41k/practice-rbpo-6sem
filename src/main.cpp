@@ -1,10 +1,3 @@
-/**
- * РБПО — Tray Application (zad-2)
- *
- * Win32 tray + Windows service integration: RPC stop, parent checks.
- * GUI aligned with zad-1 (resources, --silent).
- */
-
 #define WIN32_LEAN_AND_MEAN
 #define _WIN32_WINNT 0x0601
 
@@ -12,27 +5,22 @@
 #include <shellapi.h>
 #include <tlhelp32.h>
 #include <cstdlib>
-
+#include <cstdio>
+#include <cstdarg>
+#include <string>
 #include "resource.h"
-#include "tray_config.h"
-#include "TrayRpc_h.h"
+#include "rbpo_rpc_h.h"
+#include "rbpo_rpc_constants.h"
 
-void* __RPC_USER midl_user_allocate(size_t size) {
-  return std::malloc(size);
-}
-
-void __RPC_USER midl_user_free(void* p) {
-  std::free(p);
-}
-
-#pragma comment(lib, "advapi32.lib")
 #pragma comment(lib, "rpcrt4.lib")
+#pragma comment(lib, "advapi32.lib")
 
 // ---------------------------------------------------------------------------
-// Constants (zad-1 UI)
+// Constants
 // ---------------------------------------------------------------------------
-static const wchar_t WINDOW_CLASS[] = L"RBPOTrayAppClass";
-static const wchar_t WINDOW_TITLE[] = L"РБПО — Tray Application (zad-2)";
+static const wchar_t APP_MUTEX_NAME[] = L"Local\\RBPO_TrayApp_SingleInstance";
+static const wchar_t WINDOW_CLASS[]   = L"RBPOTrayAppClass";
+static const wchar_t WINDOW_TITLE[]   = L"РБПО — Tray Application";
 
 // ---------------------------------------------------------------------------
 // Globals
@@ -53,159 +41,177 @@ static void ShowTrayContextMenu(HWND hWnd);
 static void ShowMainWindow();
 static void HideMainWindow();
 
-static DWORD GetParentProcessId();
-static bool QueryServiceProcessId(DWORD* outPid);
-static void BootstrapStartServiceIfStopped();
-static void RequireParentIsTrayService();
-static void StopServiceThroughRpc();
+// ---------------------------------------------------------------------------
+// RPC memory allocation (required by the RPC runtime)
+// ---------------------------------------------------------------------------
+void* __RPC_USER midl_user_allocate(size_t size) { return malloc(size); }
+void  __RPC_USER midl_user_free(void* p)         { free(p); }
 
-// ===========================================================================
-// Service helpers (zad-2)
-// ===========================================================================
-
-static DWORD GetParentProcessId() {
-  const DWORD self = GetCurrentProcessId();
-  DWORD parent = 0;
-  HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
-  if (snap == INVALID_HANDLE_VALUE) {
-    return 0;
-  }
-  PROCESSENTRY32W pe{};
-  pe.dwSize = sizeof(pe);
-  if (Process32FirstW(snap, &pe)) {
-    do {
-      if (pe.th32ProcessID == self) {
-        parent = pe.th32ParentProcessID;
-        break;
-      }
-    } while (Process32NextW(snap, &pe));
-  }
-  CloseHandle(snap);
-  return parent;
-}
-
-static bool QueryServiceProcessId(DWORD* outPid) {
-  *outPid = 0;
-  SC_HANDLE scm = OpenSCManagerW(nullptr, nullptr, SC_MANAGER_CONNECT);
-  if (!scm) {
-    return false;
-  }
-  SC_HANDLE svc = OpenServiceW(scm, TRAY_SERVICE_NAME, SERVICE_QUERY_STATUS);
-  CloseServiceHandle(scm);
-  if (!svc) {
-    return false;
-  }
-  SERVICE_STATUS_PROCESS ssp{};
-  DWORD bytes = 0;
-  const BOOL ok = QueryServiceStatusEx(
-      svc,
-      SC_STATUS_PROCESS_INFO,
-      reinterpret_cast<LPBYTE>(&ssp),
-      sizeof(ssp),
-      &bytes);
-  CloseServiceHandle(svc);
-  if (!ok) {
-    return false;
-  }
-  *outPid = ssp.dwProcessId;
-  return true;
-}
-
-static void BootstrapStartServiceIfStopped() {
-  SC_HANDLE scm = OpenSCManagerW(nullptr, nullptr, SC_MANAGER_CONNECT);
-  if (!scm) {
-    ExitProcess(0);
-  }
-  SC_HANDLE svc = OpenServiceW(scm, TRAY_SERVICE_NAME, SERVICE_QUERY_STATUS | SERVICE_START);
-  CloseServiceHandle(scm);
-  if (!svc) {
-    ExitProcess(0);
-  }
-
-  SERVICE_STATUS_PROCESS ssp{};
-  DWORD bytes = 0;
-  if (!QueryServiceStatusEx(
-          svc,
-          SC_STATUS_PROCESS_INFO,
-          reinterpret_cast<LPBYTE>(&ssp),
-          sizeof(ssp),
-          &bytes)) {
-    CloseServiceHandle(svc);
-    ExitProcess(0);
-  }
-
-  if (ssp.dwCurrentState == SERVICE_STOPPED) {
-    if (!StartServiceW(svc, 0, nullptr)) {
-      CloseServiceHandle(svc);
-      ExitProcess(0);
+// ---------------------------------------------------------------------------
+// Diagnostic log — writes to rbpo-app.log next to the exe
+// ---------------------------------------------------------------------------
+static void Log(const char* fmt, ...)
+{
+    static char logPath[MAX_PATH] = {};
+    if (!logPath[0]) {
+        char exePath[MAX_PATH];
+        GetModuleFileNameA(nullptr, exePath, MAX_PATH);
+        std::string p(exePath);
+        auto pos = p.find_last_of("\\/");
+        if (pos != std::string::npos) p = p.substr(0, pos + 1);
+        p += "rbpo-app.log";
+        strncpy_s(logPath, p.c_str(), _TRUNCATE);
     }
-    const DWORD deadline = GetTickCount() + 120000;
-    for (;;) {
-      if (!QueryServiceStatusEx(
-              svc,
-              SC_STATUS_PROCESS_INFO,
-              reinterpret_cast<LPBYTE>(&ssp),
-              sizeof(ssp),
-              &bytes)) {
-        CloseServiceHandle(svc);
-        ExitProcess(0);
-      }
-      if (ssp.dwCurrentState == SERVICE_RUNNING) {
-        CloseServiceHandle(svc);
-        ExitProcess(0);
-      }
-      if (GetTickCount() >= deadline) {
-        CloseServiceHandle(svc);
-        ExitProcess(0);
-      }
-      Sleep(200);
-    }
-  }
-
-  CloseServiceHandle(svc);
+    FILE* f = nullptr;
+    fopen_s(&f, logPath, "a");
+    if (!f) return;
+    SYSTEMTIME st;
+    GetLocalTime(&st);
+    fprintf(f, "[%02d:%02d:%02d.%03d] ", st.wHour, st.wMinute, st.wSecond, st.wMilliseconds);
+    va_list args;
+    va_start(args, fmt);
+    vfprintf(f, fmt, args);
+    va_end(args);
+    fprintf(f, "\n");
+    fclose(f);
 }
 
-static void RequireParentIsTrayService() {
-  DWORD servicePid = 0;
-  if (!QueryServiceProcessId(&servicePid) || servicePid == 0) {
-    ExitProcess(0);
-  }
-  const DWORD parentPid = GetParentProcessId();
-  if (parentPid == 0 || parentPid != servicePid) {
-    ExitProcess(0);
-  }
+// ---------------------------------------------------------------------------
+// Service helpers
+// ---------------------------------------------------------------------------
+
+static bool IsServiceRunning()
+{
+    SC_HANDLE hSCM = OpenSCManagerW(nullptr, nullptr, SC_MANAGER_CONNECT);
+    if (!hSCM) return false;
+
+    SC_HANDLE hSvc = OpenServiceW(hSCM, RBPO_SERVICE_NAME, SERVICE_QUERY_STATUS);
+    if (!hSvc) { CloseServiceHandle(hSCM); return false; }
+
+    SERVICE_STATUS status = {};
+    QueryServiceStatus(hSvc, &status);
+    CloseServiceHandle(hSvc);
+    CloseServiceHandle(hSCM);
+
+    return status.dwCurrentState == SERVICE_RUNNING;
 }
 
-static void StopServiceThroughRpc() {
-  RPC_WSTR stringBinding = nullptr;
-  RpcStringBindingComposeW(
-      nullptr,
-      reinterpret_cast<RPC_WSTR>(L"ncalrpc"),
-      nullptr,
-      reinterpret_cast<RPC_WSTR>(const_cast<wchar_t*>(TRAY_RPC_ENDPOINT)),
-      nullptr,
-      &stringBinding);
+static bool StartServiceAndWait()
+{
+    SC_HANDLE hSCM = OpenSCManagerW(nullptr, nullptr, SC_MANAGER_CONNECT);
+    if (!hSCM) return false;
 
-  hTrayRpcBinding = nullptr;
-  if (stringBinding) {
-    if (RpcBindingFromStringBindingW(stringBinding, &hTrayRpcBinding) != RPC_S_OK) {
-      hTrayRpcBinding = nullptr;
+    SC_HANDLE hSvc = OpenServiceW(hSCM, RBPO_SERVICE_NAME,
+                                   SERVICE_START | SERVICE_QUERY_STATUS);
+    if (!hSvc) { CloseServiceHandle(hSCM); return false; }
+
+    if (!StartServiceW(hSvc, 0, nullptr)) {
+        DWORD err = GetLastError();
+        if (err != ERROR_SERVICE_ALREADY_RUNNING) {
+            CloseServiceHandle(hSvc);
+            CloseServiceHandle(hSCM);
+            return false;
+        }
     }
+
+    SERVICE_STATUS status = {};
+    for (int i = 0; i < 60; i++) {
+        QueryServiceStatus(hSvc, &status);
+        if (status.dwCurrentState == SERVICE_RUNNING) break;
+        Sleep(500);
+    }
+
+    CloseServiceHandle(hSvc);
+    CloseServiceHandle(hSCM);
+    return status.dwCurrentState == SERVICE_RUNNING;
+}
+
+static DWORD GetParentProcessId()
+{
+    DWORD pid  = GetCurrentProcessId();
+    DWORD ppid = 0;
+
+    HANDLE hSnap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    if (hSnap == INVALID_HANDLE_VALUE) return 0;
+
+    PROCESSENTRY32W pe = { sizeof(pe) };
+    if (Process32FirstW(hSnap, &pe)) {
+        do {
+            if (pe.th32ProcessID == pid) {
+                ppid = pe.th32ParentProcessID;
+                break;
+            }
+        } while (Process32NextW(hSnap, &pe));
+    }
+    CloseHandle(hSnap);
+    return ppid;
+}
+
+static bool IsParentService()
+{
+    DWORD pid  = GetCurrentProcessId();
+    DWORD ppid = 0;
+    wchar_t parentExe[MAX_PATH] = {};
+
+    HANDLE hSnap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    if (hSnap == INVALID_HANDLE_VALUE) return false;
+
+    PROCESSENTRY32W pe = { sizeof(pe) };
+    if (Process32FirstW(hSnap, &pe)) {
+        do {
+            if (pe.th32ProcessID == pid) {
+                ppid = pe.th32ParentProcessID;
+                break;
+            }
+        } while (Process32NextW(hSnap, &pe));
+    }
+
+    if (ppid == 0) { CloseHandle(hSnap); return false; }
+
+    pe.dwSize = sizeof(pe);
+    if (Process32FirstW(hSnap, &pe)) {
+        do {
+            if (pe.th32ProcessID == ppid) {
+                wcscpy_s(parentExe, pe.szExeFile);
+                break;
+            }
+        } while (Process32NextW(hSnap, &pe));
+    }
+
+    CloseHandle(hSnap);
+
+    bool result = (parentExe[0] && _wcsicmp(parentExe, RBPO_SERVICE_EXE_NAME) == 0);
+    Log("  IsParentService: ppid=%u, parentExe='%ls', expected='%ls', match=%d",
+        ppid, parentExe, RBPO_SERVICE_EXE_NAME, result);
+    return result;
+}
+
+static void StopServiceViaRpc()
+{
+    RPC_WSTR stringBinding = nullptr;
+    RPC_STATUS status = RpcStringBindingComposeW(
+        nullptr,
+        reinterpret_cast<RPC_WSTR>(const_cast<wchar_t*>(L"ncalrpc")),
+        nullptr,
+        reinterpret_cast<RPC_WSTR>(const_cast<wchar_t*>(RBPO_RPC_ENDPOINT)),
+        nullptr,
+        &stringBinding);
+
+    if (status != RPC_S_OK) return;
+
+    status = RpcBindingFromStringBindingW(stringBinding, &hRBPOServiceBinding);
     RpcStringFreeW(&stringBinding);
-  }
 
-  if (!hTrayRpcBinding) {
-    return;
-  }
+    if (status != RPC_S_OK) return;
 
-  RpcTryExcept {
-    RequestStop();
-  }
-  RpcExcept(1) {
-  }
-  RpcEndExcept
+    RpcTryExcept {
+        RBPOService_Stop();
+    }
+    RpcExcept(1) {
+    }
+    RpcEndExcept
 
-  RpcBindingFree(&hTrayRpcBinding);
+    RpcBindingFree(&hRBPOServiceBinding);
 }
 
 // ===========================================================================
@@ -213,17 +219,31 @@ static void StopServiceThroughRpc() {
 // ===========================================================================
 int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR pCmdLine, int)
 {
-    g_hMutex = CreateMutexW(nullptr, TRUE, TRAY_MUTEX_NAME);
+    Log("=== rbpo-app started (PID=%u) ===", GetCurrentProcessId());
+
+    bool svcRunning = IsServiceRunning();
+    Log("IsServiceRunning = %d", svcRunning);
+    if (!svcRunning) {
+        bool started = StartServiceAndWait();
+        Log("StartServiceAndWait = %d, exiting", started);
+        return 0;
+    }
+
+    DWORD ppid = GetParentProcessId();
+    bool parentIsSvc = IsParentService();
+    Log("ParentPID=%u, IsParentService=%d", ppid, parentIsSvc);
+    if (!parentIsSvc) {
+        Log("Parent is not the service, exiting");
+        return 0;
+    }
+
+    g_hMutex = CreateMutexW(nullptr, TRUE, APP_MUTEX_NAME);
     if (GetLastError() == ERROR_ALREADY_EXISTS) {
         if (g_hMutex) CloseHandle(g_hMutex);
         return 0;
     }
 
-    BootstrapStartServiceIfStopped();
-    RequireParentIsTrayService();
-
     g_hInstance = hInstance;
-
     WM_TASKBARCREATED = RegisterWindowMessageW(L"TaskbarCreated");
 
     WNDCLASSEXW wc  = {};
@@ -306,10 +326,13 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
             ShowMainWindow();
             break;
         case ID_TRAY_EXIT:
+            StopServiceViaRpc();
+            DestroyWindow(hWnd);
+            break;
         case ID_FILE_EXIT:
-            RemoveTrayIcon();
-            StopServiceThroughRpc();
-            return 0;
+            StopServiceViaRpc();
+            DestroyWindow(hWnd);
+            break;
         }
         return 0;
 
@@ -358,7 +381,6 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 // ===========================================================================
 // Tray icon helpers
 // ===========================================================================
-
 static void AddTrayIcon(HWND hWnd)
 {
     g_nid.cbSize            = sizeof(g_nid);
@@ -369,7 +391,7 @@ static void AddTrayIcon(HWND hWnd)
     g_nid.hIcon             = LoadIconW(g_hInstance, MAKEINTRESOURCEW(IDI_APPICON));
     if (!g_nid.hIcon)
         g_nid.hIcon = LoadIconW(nullptr, IDI_APPLICATION);
-    wcscpy_s(g_nid.szTip, L"РБПО Tray — zad-2");
+    wcscpy_s(g_nid.szTip, L"РБПО Tray Application");
 
     Shell_NotifyIconW(NIM_ADD, &g_nid);
 }

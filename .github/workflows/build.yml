@@ -1,27 +1,33 @@
-name: build
+name: Build
 
 on:
   push:
-    branches: [main, zad-1, zad-2]
+    branches: [ main, zad-1, zad-2 ]
   pull_request:
-    branches: [main]
+    branches: [ main ]
 
 jobs:
-  windows:
+  build:
     runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v4
 
-      - name: Configure
+    strategy:
+      matrix:
+        build_type: [Release]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure CMake
         run: cmake -B build -G "Visual Studio 17 2022" -A x64
 
-      - name: Build Release
-        run: cmake --build build --config Release
+      - name: Build
+        run: cmake --build build --config ${{ matrix.build_type }}
 
-      - name: Upload binaries
+      - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: rbpo-zad2-Release
+          name: rbpo-app-${{ matrix.build_type }}
           path: |
-            build/Release/rbpo-app.exe
-            build/Release/TraySvc.exe
+            build/${{ matrix.build_type }}/rbpo-app.exe
+            build/${{ matrix.build_type }}/rbpo-service.exe
