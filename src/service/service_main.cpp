@@ -204,22 +204,6 @@ static void WINAPI ServiceMain(DWORD, LPWSTR*)
     g_ServiceStatus.dwControlsAccepted = SERVICE_ACCEPT_SESSIONCHANGE;
     SetServiceStatus(g_hServiceStatus, &g_ServiceStatus);
 
-    WTS_SESSION_INFOW* pSessions = nullptr;
-    DWORD sessionCount = 0;
-    if (WTSEnumerateSessionsW(WTS_CURRENT_SERVER_HANDLE, 0, 1,
-                               &pSessions, &sessionCount)) {
-        Log("Enumerated %u sessions", sessionCount);
-        for (DWORD i = 0; i < sessionCount; i++) {
-            Log("  Session %u: id=%u state=%d",
-                i, pSessions[i].SessionId, pSessions[i].State);
-            if (pSessions[i].State == WTSActive && pSessions[i].SessionId != 0)
-                LaunchAppInSession(pSessions[i].SessionId);
-        }
-        WTSFreeMemory(pSessions);
-    } else {
-        Log("WTSEnumerateSessionsW failed, error=%u", GetLastError());
-    }
-
     RPC_STATUS rpcStatus;
     rpcStatus = RpcServerUseProtseqEpW(
         reinterpret_cast<RPC_WSTR>(const_cast<wchar_t*>(L"ncalrpc")),
@@ -246,9 +230,28 @@ static void WINAPI ServiceMain(DWORD, LPWSTR*)
         return;
     }
 
+    /* RUNNING до запуска клиентов: rbpo-app проверяет SCM и ждёт SERVICE_RUNNING. */
     g_ServiceStatus.dwCurrentState = SERVICE_RUNNING;
     SetServiceStatus(g_hServiceStatus, &g_ServiceStatus);
-    Log("Service RUNNING, entering RpcServerListen...");
+    Log("Service RUNNING (before session launches)");
+
+    WTS_SESSION_INFOW* pSessions = nullptr;
+    DWORD sessionCount = 0;
+    if (WTSEnumerateSessionsW(WTS_CURRENT_SERVER_HANDLE, 0, 1,
+                               &pSessions, &sessionCount)) {
+        Log("Enumerated %u sessions", sessionCount);
+        for (DWORD i = 0; i < sessionCount; i++) {
+            Log("  Session %u: id=%u state=%d",
+                i, pSessions[i].SessionId, pSessions[i].State);
+            if (pSessions[i].State == WTSActive && pSessions[i].SessionId != 0)
+                LaunchAppInSession(pSessions[i].SessionId);
+        }
+        WTSFreeMemory(pSessions);
+    } else {
+        Log("WTSEnumerateSessionsW failed, error=%u", GetLastError());
+    }
+
+    Log("Entering RpcServerListen...");
 
     rpcStatus = RpcServerListen(1, RPC_C_LISTEN_MAX_CALLS_DEFAULT, FALSE);
     Log("RpcServerListen returned %d", rpcStatus);
