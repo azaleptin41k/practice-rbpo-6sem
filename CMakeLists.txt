@@ -123,7 +123,6 @@ set_source_files_properties("${RPC_SERVER_OBJ}" PROPERTIES
 add_executable(rbpo-app WIN32
   src/main.cpp
   src/app.rc
-  "${RPC_CLIENT_OBJ}"
 )
 
 add_dependencies(rbpo-app rpc_stubs rpc_stub_objects)
@@ -144,6 +143,7 @@ target_link_libraries(rbpo-app PRIVATE
   gdi32
   advapi32
   rpcrt4
+  "${RPC_CLIENT_OBJ}"
 )
 
 # ---------------------------------------------------------------------------
@@ -151,7 +151,6 @@ target_link_libraries(rbpo-app PRIVATE
 # ---------------------------------------------------------------------------
 add_executable(TraySvc
   src/service_main.cpp
-  "${RPC_SERVER_OBJ}"
 )
 
 add_dependencies(TraySvc rpc_stubs rpc_stub_objects)
@@ -171,6 +170,7 @@ target_link_libraries(TraySvc PRIVATE
   userenv
   rpcrt4
   user32
+  "${RPC_SERVER_OBJ}"
 )
 
 set_target_properties(TraySvc PROPERTIES WIN32_EXECUTABLE FALSE)
