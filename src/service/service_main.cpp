@@ -17,9 +17,12 @@
 #include <string>
 #include <cstdlib>
 #include <cstdio>
+#include <cstdarg>
 
 #include "rbpo_rpc_h.h"
 #include "rbpo_rpc_constants.h"
+#include "state.h"
+#include "json_util.h"
 
 #pragma comment(lib, "wtsapi32.lib")
 #pragma comment(lib, "userenv.lib")
@@ -35,9 +38,9 @@ static std::vector<HANDLE>   g_childProcesses;
 static CRITICAL_SECTION      g_cs;
 
 // ---------------------------------------------------------------------------
-// Diagnostic log — writes to rbpo-service.log next to the exe
+// Diagnostic log — writes to rbpo-service.log next to the exe (used by state.cpp)
 // ---------------------------------------------------------------------------
-static void Log(const char* fmt, ...)
+extern "C" void RBPOLog(const char* fmt, ...)
 {
     static char logPath[MAX_PATH] = {};
     if (!logPath[0]) {
@@ -70,12 +73,98 @@ void* __RPC_USER midl_user_allocate(size_t size) { return malloc(size); }
 void  __RPC_USER midl_user_free(void* p)         { free(p); }
 
 // ---------------------------------------------------------------------------
-// RPC interface implementation
+// RPC interface implementation — Requirement 5
+// Clients call this to stop the service.
 // ---------------------------------------------------------------------------
 void RBPOService_Stop(void)
 {
-    Log("RBPOService_Stop called by RPC client");
+    RBPOLog("RBPOService_Stop called by RPC client");
     RpcMgmtStopServerListening(nullptr);
+}
+
+// ---------------------------------------------------------------------------
+// Helpers for RPC out-string allocation (must use midl_user_allocate)
+// ---------------------------------------------------------------------------
+static wchar_t* RpcDupW(const std::wstring& s)
+{
+    size_t bytes = (s.size() + 1) * sizeof(wchar_t);
+    auto* p = static_cast<wchar_t*>(midl_user_allocate(bytes));
+    if (!p) return nullptr;
+    memcpy(p, s.c_str(), bytes);
+    return p;
+}
+
+// ---------------------------------------------------------------------------
+// RPC: GetCurrentUser — task 1.3
+// ---------------------------------------------------------------------------
+long RBPO_GetCurrentUser(long* authenticated, wchar_t** email, wchar_t** name)
+{
+    auto u = rbpo::GetUserInfo();
+    *authenticated = u.authenticated ? 1 : 0;
+    *email = RpcDupW(rbpo::Utf8ToWide(u.email));
+    *name  = RpcDupW(rbpo::Utf8ToWide(u.name));
+    return RBPO_OK;
+}
+
+// ---------------------------------------------------------------------------
+// RPC: Login
+// ---------------------------------------------------------------------------
+long RBPO_Login(const wchar_t* email, const wchar_t* password, wchar_t** errorMessage)
+{
+    std::wstring err;
+    int rc = rbpo::Login(email ? email : L"", password ? password : L"", err);
+    *errorMessage = RpcDupW(err);
+    return rc;
+}
+
+// ---------------------------------------------------------------------------
+// RPC: Logout
+// ---------------------------------------------------------------------------
+long RBPO_Logout(void)
+{
+    return rbpo::Logout();
+}
+
+// ---------------------------------------------------------------------------
+// RPC: GetLicenseStatus
+// ---------------------------------------------------------------------------
+long RBPO_GetLicenseStatus(long* hasLicense, wchar_t** expirationIso,
+                           long* blocked, hyper* secondsLeft)
+{
+    auto l = rbpo::GetLicenseInfo();
+    *hasLicense    = l.held ? 1 : 0;
+    /* Tri-state: 0=none, 1=blocked by admin, 2=expired naturally. */
+    if (l.blocked)       *blocked = 1;
+    else if (l.expired)  *blocked = 2;
+    else                 *blocked = 0;
+    *secondsLeft   = static_cast<hyper>(l.secondsLeft);
+    *expirationIso = RpcDupW(rbpo::Utf8ToWide(l.expirationIso));
+    return RBPO_OK;
+}
+
+// ---------------------------------------------------------------------------
+// RPC: ActivateProduct
+// ---------------------------------------------------------------------------
+long RBPO_ActivateProduct(const wchar_t* activationKey, wchar_t** errorMessage)
+{
+    std::wstring err;
+    int rc = rbpo::Activate(activationKey ? activationKey : L"", err);
+    *errorMessage = RpcDupW(err);
+    return rc;
+}
+
+// ---------------------------------------------------------------------------
+// RPC: AVPing — license-gated stub for AV functionality
+// ---------------------------------------------------------------------------
+long RBPO_AVPing(wchar_t** message)
+{
+    int gate = rbpo::LicenseGate();
+    if (gate != RBPO_OK) {
+        *message = RpcDupW(L"No active license");
+        return RBPO_ERR_NO_LICENSE;
+    }
+    *message = RpcDupW(L"AV module ready");
+    return RBPO_OK;
 }
 
 // ---------------------------------------------------------------------------
@@ -94,7 +183,10 @@ static std::wstring GetAppPath()
 }
 
 // ---------------------------------------------------------------------------
-// Launch the GUI app in a given terminal session
+// Launch the GUI app in a given terminal session — Requirements 1, 2
+//   • Skips session 0
+//   • Runs as the session owner
+//   • Main window is hidden (--silent)
 // ---------------------------------------------------------------------------
 static void LaunchAppInSession(DWORD sessionId)
 {
@@ -102,14 +194,14 @@ static void LaunchAppInSession(DWORD sessionId)
 
     HANDLE hToken = nullptr;
     if (!WTSQueryUserToken(sessionId, &hToken)) {
-        Log("  WTSQueryUserToken failed for session %u, error=%u", sessionId, GetLastError());
+        RBPOLog("  WTSQueryUserToken failed for session %u, error=%u", sessionId, GetLastError());
         return;
     }
 
     HANDLE hDupToken = nullptr;
     if (!DuplicateTokenEx(hToken, MAXIMUM_ALLOWED, nullptr,
                           SecurityIdentification, TokenPrimary, &hDupToken)) {
-        Log("  DuplicateTokenEx failed, error=%u", GetLastError());
+        RBPOLog("  DuplicateTokenEx failed, error=%u", GetLastError());
         CloseHandle(hToken);
         return;
     }
@@ -128,6 +220,7 @@ static void LaunchAppInSession(DWORD sessionId)
 
     PROCESS_INFORMATION pi = {};
 
+    // writable copy of the command line (CreateProcessAsUser requirement)
     std::vector<wchar_t> cmdBuf(cmdLine.begin(), cmdLine.end());
     cmdBuf.push_back(L'\0');
 
@@ -135,13 +228,13 @@ static void LaunchAppInSession(DWORD sessionId)
                              nullptr, nullptr, FALSE,
                              CREATE_UNICODE_ENVIRONMENT,
                              pEnv, nullptr, &si, &pi)) {
-        Log("  Launched PID=%u in session %u", pi.dwProcessId, sessionId);
+        RBPOLog("  Launched PID=%u in session %u", pi.dwProcessId, sessionId);
         EnterCriticalSection(&g_cs);
         g_childProcesses.push_back(pi.hProcess);
         LeaveCriticalSection(&g_cs);
         CloseHandle(pi.hThread);
     } else {
-        Log("  CreateProcessAsUserW failed, error=%u", GetLastError());
+        RBPOLog("  CreateProcessAsUserW failed, error=%u", GetLastError());
     }
 
     if (pEnv) DestroyEnvironmentBlock(pEnv);
@@ -149,7 +242,7 @@ static void LaunchAppInSession(DWORD sessionId)
 }
 
 // ---------------------------------------------------------------------------
-// Terminate all launched GUI applications
+// Terminate all launched GUI applications — Requirement 6
 // ---------------------------------------------------------------------------
 static void TerminateAllChildren()
 {
@@ -164,16 +257,20 @@ static void TerminateAllChildren()
 
 // ---------------------------------------------------------------------------
 // Service control handler
+//   • Requirement 3: ignores SERVICE_CONTROL_STOP and SERVICE_CONTROL_SHUTDOWN
+//   • Requirement 2: launches app on WTS_SESSION_LOGON
 // ---------------------------------------------------------------------------
 static DWORD WINAPI ServiceCtrlHandlerEx(DWORD dwControl, DWORD dwEventType,
-                                         LPVOID lpEventData, LPVOID)
+                                          LPVOID lpEventData, LPVOID)
 {
     switch (dwControl) {
     case SERVICE_CONTROL_STOP:
     case SERVICE_CONTROL_SHUTDOWN:
+        // Requirement 3: disable Stop and Shutdown handling
         return NO_ERROR;
 
     case SERVICE_CONTROL_SESSIONCHANGE:
+        // Requirement 2: launch app when a new user logs on
         if (dwEventType == WTS_SESSION_LOGON) {
             auto* pNotify = reinterpret_cast<WTSSESSION_NOTIFICATION*>(lpEventData);
             LaunchAppInSession(pNotify->dwSessionId);
@@ -193,33 +290,37 @@ static void WINAPI ServiceMain(DWORD, LPWSTR*)
 {
     InitializeCriticalSection(&g_cs);
 
-    Log("=== ServiceMain started (PID=%u) ===", GetCurrentProcessId());
+    RBPOLog("=== ServiceMain started (PID=%u) ===", GetCurrentProcessId());
 
     g_hServiceStatus = RegisterServiceCtrlHandlerExW(
         RBPO_SERVICE_NAME, ServiceCtrlHandlerEx, nullptr);
-    if (!g_hServiceStatus) { Log("RegisterServiceCtrlHandlerExW failed"); return; }
+    if (!g_hServiceStatus) { RBPOLog("RegisterServiceCtrlHandlerExW failed"); return; }
 
+    // Report SERVICE_START_PENDING
     g_ServiceStatus.dwServiceType      = SERVICE_WIN32_OWN_PROCESS;
     g_ServiceStatus.dwCurrentState     = SERVICE_START_PENDING;
     g_ServiceStatus.dwControlsAccepted = SERVICE_ACCEPT_SESSIONCHANGE;
+    // NOTE: SERVICE_ACCEPT_STOP and SERVICE_ACCEPT_SHUTDOWN are deliberately omitted
     SetServiceStatus(g_hServiceStatus, &g_ServiceStatus);
 
+    // --- Requirement 1: launch app in all existing active sessions -----------
     WTS_SESSION_INFOW* pSessions = nullptr;
     DWORD sessionCount = 0;
     if (WTSEnumerateSessionsW(WTS_CURRENT_SERVER_HANDLE, 0, 1,
                                &pSessions, &sessionCount)) {
-        Log("Enumerated %u sessions", sessionCount);
+        RBPOLog("Enumerated %u sessions", sessionCount);
         for (DWORD i = 0; i < sessionCount; i++) {
-            Log("  Session %u: id=%u state=%d",
+            RBPOLog("  Session %u: id=%u state=%d",
                 i, pSessions[i].SessionId, pSessions[i].State);
-            if (pSessions[i].State == WTSActive && pSessions[i].SessionId != 0)
+            if (pSessions[i].SessionId != 0 && pSessions[i].State == WTSActive)
                 LaunchAppInSession(pSessions[i].SessionId);
         }
         WTSFreeMemory(pSessions);
     } else {
-        Log("WTSEnumerateSessionsW failed, error=%u", GetLastError());
+        RBPOLog("WTSEnumerateSessionsW failed, error=%u", GetLastError());
     }
 
+    // --- Requirement 4: start RPC server with ALPC transport -----------------
     RPC_STATUS rpcStatus;
     rpcStatus = RpcServerUseProtseqEpW(
         reinterpret_cast<RPC_WSTR>(const_cast<wchar_t*>(L"ncalrpc")),
@@ -227,7 +328,7 @@ static void WINAPI ServiceMain(DWORD, LPWSTR*)
         reinterpret_cast<RPC_WSTR>(const_cast<wchar_t*>(RBPO_RPC_ENDPOINT)),
         nullptr);
 
-    Log("RpcServerUseProtseqEpW returned %d", rpcStatus);
+    RBPOLog("RpcServerUseProtseqEpW returned %d", rpcStatus);
     if (rpcStatus != RPC_S_OK) {
         g_ServiceStatus.dwCurrentState = SERVICE_STOPPED;
         g_ServiceStatus.dwWin32ExitCode = rpcStatus;
@@ -236,8 +337,9 @@ static void WINAPI ServiceMain(DWORD, LPWSTR*)
         return;
     }
 
+    // --- Requirement 5: register the RPC interface ---------------------------
     rpcStatus = RpcServerRegisterIf(RBPOServiceRpc_v1_0_s_ifspec, nullptr, nullptr);
-    Log("RpcServerRegisterIf returned %d", rpcStatus);
+    RBPOLog("RpcServerRegisterIf returned %d", rpcStatus);
     if (rpcStatus != RPC_S_OK) {
         g_ServiceStatus.dwCurrentState = SERVICE_STOPPED;
         g_ServiceStatus.dwWin32ExitCode = rpcStatus;
@@ -246,18 +348,28 @@ static void WINAPI ServiceMain(DWORD, LPWSTR*)
         return;
     }
 
+    // Report SERVICE_RUNNING
     g_ServiceStatus.dwCurrentState = SERVICE_RUNNING;
     SetServiceStatus(g_hServiceStatus, &g_ServiceStatus);
-    Log("Service RUNNING, entering RpcServerListen...");
+    RBPOLog("Service RUNNING, entering RpcServerListen...");
 
+    // --- Task 1.3: start auth/license background workers ----------------------
+    rbpo::StateInit();
+
+    // --- Requirement 4: blocks until RpcMgmtStopServerListening is called ----
     rpcStatus = RpcServerListen(1, RPC_C_LISTEN_MAX_CALLS_DEFAULT, FALSE);
-    Log("RpcServerListen returned %d", rpcStatus);
+    RBPOLog("RpcServerListen returned %d", rpcStatus);
 
+    // --- Task 1.3: stop background workers -----------------------------------
+    rbpo::StateShutdown();
+
+    // --- Requirement 6: terminate all child processes on stop ----------------
     TerminateAllChildren();
 
     RpcServerUnregisterIf(RBPOServiceRpc_v1_0_s_ifspec, nullptr, FALSE);
 
-    Log("Service STOPPED");
+    // Report SERVICE_STOPPED
+    RBPOLog("Service STOPPED");
     g_ServiceStatus.dwCurrentState     = SERVICE_STOPPED;
     g_ServiceStatus.dwControlsAccepted = 0;
     SetServiceStatus(g_hServiceStatus, &g_ServiceStatus);

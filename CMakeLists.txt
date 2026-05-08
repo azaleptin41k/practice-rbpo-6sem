@@ -5,7 +5,7 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # ---------------------------------------------------------------------------
-# Convert logo.png -> src/logo.ico at configure time (Windows + PowerShell)
+# Convert logo.png → src/logo.ico at configure time (Windows + PowerShell)
 # ---------------------------------------------------------------------------
 set(ICON_PNG "${CMAKE_SOURCE_DIR}/logo.png")
 set(ICON_ICO "${CMAKE_SOURCE_DIR}/src/logo.ico")
@@ -26,10 +26,11 @@ if(WIN32 AND EXISTS "${ICON_PNG}" AND NOT EXISTS "${ICON_ICO}")
 endif()
 
 # ---------------------------------------------------------------------------
-# MIDL - generate RPC stubs from the IDL file
+# MIDL — generate RPC stubs from the IDL file
 # ---------------------------------------------------------------------------
 find_program(MIDL_COMPILER midl)
 if(NOT MIDL_COMPILER)
+    # Search in Windows SDK directories (needed in CI where midl is not on PATH)
     file(GLOB _SDK_BIN_DIRS
         "C:/Program Files (x86)/Windows Kits/10/bin/10.*/x64"
         "C:/Program Files (x86)/Windows Kits/10/bin/x64"
@@ -49,17 +50,27 @@ set(RPC_HEADER "${RPC_GEN_DIR}/rbpo_rpc_h.h")
 set(RPC_CLIENT "${RPC_GEN_DIR}/rbpo_rpc_c.c")
 set(RPC_SERVER "${RPC_GEN_DIR}/rbpo_rpc_s.c")
 
+# Map CMake generator platform to MIDL /env flag
+if(CMAKE_GENERATOR_PLATFORM STREQUAL "ARM64")
+    set(MIDL_ENV arm64)
+elseif(CMAKE_GENERATOR_PLATFORM STREQUAL "Win32")
+    set(MIDL_ENV win32)
+else()
+    set(MIDL_ENV x64)
+endif()
+
 add_custom_command(
     OUTPUT "${RPC_HEADER}" "${RPC_CLIENT}" "${RPC_SERVER}"
     COMMAND "${MIDL_COMPILER}"
         /acf "${ACF_FILE}"
         /header rbpo_rpc_h.h
-        /cstub rbpo_rpc_c.c
-        /sstub rbpo_rpc_s.c
+        /cstub  rbpo_rpc_c.c
+        /sstub  rbpo_rpc_s.c
+        /env ${MIDL_ENV}
         "${IDL_FILE}"
     DEPENDS "${IDL_FILE}" "${ACF_FILE}"
     WORKING_DIRECTORY "${RPC_GEN_DIR}"
-    COMMENT "Running MIDL compiler on rbpo_rpc.idl"
+    COMMENT "Running MIDL compiler on rbpo_rpc.idl (env=${MIDL_ENV})"
 )
 
 add_custom_target(rpc_stubs DEPENDS "${RPC_HEADER}" "${RPC_CLIENT}" "${RPC_SERVER}")
@@ -79,6 +90,7 @@ target_include_directories(${PROJECT_NAME} PRIVATE src "${RPC_GEN_DIR}")
 
 target_compile_definitions(${PROJECT_NAME} PRIVATE UNICODE _UNICODE)
 
+# UTF-8 source and execution character set (for Cyrillic strings)
 target_compile_options(${PROJECT_NAME} PRIVATE $<$<CXX_COMPILER_ID:MSVC>:/utf-8>)
 
 target_link_libraries(${PROJECT_NAME} PRIVATE shell32 rpcrt4 advapi32)
@@ -88,6 +100,9 @@ target_link_libraries(${PROJECT_NAME} PRIVATE shell32 rpcrt4 advapi32)
 # ---------------------------------------------------------------------------
 add_executable(rbpo-service
     src/service/service_main.cpp
+    src/service/http_client.cpp
+    src/service/json_util.cpp
+    src/service/state.cpp
     "${RPC_SERVER}"
 )
 
@@ -99,4 +114,6 @@ target_compile_definitions(rbpo-service PRIVATE UNICODE _UNICODE)
 
 target_compile_options(rbpo-service PRIVATE $<$<CXX_COMPILER_ID:MSVC>:/utf-8>)
 
-target_link_libraries(rbpo-service PRIVATE wtsapi32 userenv rpcrt4 advapi32)
+target_link_libraries(rbpo-service PRIVATE
+    wtsapi32 userenv rpcrt4 advapi32
+    winhttp iphlpapi crypt32 ws2_32)
