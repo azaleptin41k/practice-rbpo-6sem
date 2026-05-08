@@ -31,91 +31,12 @@ if(EXISTS "${ICON_PNG}" AND NOT EXISTS "${ICON_ICO}")
 endif()
 
 # ---------------------------------------------------------------------------
-# MIDL — RPC stubs 
+# Checked-in RPC stubs
 # ---------------------------------------------------------------------------
-find_program(MIDL_COMPILER midl)
-if(NOT MIDL_COMPILER)
-  file(GLOB _SDK_BIN_DIRS
-    "C:/Program Files (x86)/Windows Kits/10/bin/10.*/x64"
-    "C:/Program Files (x86)/Windows Kits/10/bin/x64"
-  )
-  find_program(MIDL_COMPILER midl PATHS ${_SDK_BIN_DIRS})
-endif()
-if(NOT MIDL_COMPILER)
-  message(FATAL_ERROR "MIDL compiler not found. Install the Windows SDK.")
-endif()
-
-set(IDL_FILE "${CMAKE_SOURCE_DIR}/idl/TrayRpc.idl")
-set(ACF_FILE "${CMAKE_SOURCE_DIR}/idl/TrayRpc.acf")
-set(RPC_GEN_DIR "${CMAKE_BINARY_DIR}/rpc_gen")
-file(MAKE_DIRECTORY "${RPC_GEN_DIR}")
-
-set(RPC_HEADER "${RPC_GEN_DIR}/TrayRpc_h.h")
-set(RPC_CLIENT "${RPC_GEN_DIR}/TrayRpc_c.c")
-set(RPC_SERVER "${RPC_GEN_DIR}/TrayRpc_s.c")
-
-add_custom_command(
-  OUTPUT "${RPC_HEADER}" "${RPC_CLIENT}" "${RPC_SERVER}"
-  COMMAND "${MIDL_COMPILER}"
-    /acf "${ACF_FILE}"
-    /nologo
-    /win64
-    /W1
-    /h TrayRpc_h.h
-    /cstub TrayRpc_c.c
-    /sstub TrayRpc_s.c
-    "${IDL_FILE}"
-  DEPENDS "${IDL_FILE}" "${ACF_FILE}"
-  WORKING_DIRECTORY "${RPC_GEN_DIR}"
-  COMMENT "Running MIDL compiler on TrayRpc.idl"
-)
-
-add_custom_target(rpc_stubs DEPENDS "${RPC_HEADER}" "${RPC_CLIENT}" "${RPC_SERVER}")
-
-# ---------------------------------------------------------------------------
-# RPC stub objects (compile generated MIDL sources as pure C)
-# ---------------------------------------------------------------------------
-set(RPC_CLIENT_OBJ "${RPC_GEN_DIR}/TrayRpc_c.obj")
-set(RPC_SERVER_OBJ "${RPC_GEN_DIR}/TrayRpc_s.obj")
-
-add_custom_command(
-  OUTPUT "${RPC_CLIENT_OBJ}"
-  COMMAND "${CMAKE_C_COMPILER}"
-    /nologo
-    /TC
-    /c
-    /I"${RPC_GEN_DIR}"
-    /Fo"${RPC_CLIENT_OBJ}"
-    "${RPC_CLIENT}"
-  DEPENDS "${RPC_CLIENT}" "${RPC_HEADER}"
-  WORKING_DIRECTORY "${RPC_GEN_DIR}"
-  COMMENT "Compiling TrayRpc_c.c as C"
-)
-
-add_custom_command(
-  OUTPUT "${RPC_SERVER_OBJ}"
-  COMMAND "${CMAKE_C_COMPILER}"
-    /nologo
-    /TC
-    /c
-    /I"${RPC_GEN_DIR}"
-    /Fo"${RPC_SERVER_OBJ}"
-    "${RPC_SERVER}"
-  DEPENDS "${RPC_SERVER}" "${RPC_HEADER}"
-  WORKING_DIRECTORY "${RPC_GEN_DIR}"
-  COMMENT "Compiling TrayRpc_s.c as C"
-)
-
-add_custom_target(rpc_stub_objects DEPENDS "${RPC_CLIENT_OBJ}" "${RPC_SERVER_OBJ}")
-
-set_source_files_properties("${RPC_CLIENT_OBJ}" PROPERTIES
-  GENERATED TRUE
-  EXTERNAL_OBJECT TRUE
-)
-set_source_files_properties("${RPC_SERVER_OBJ}" PROPERTIES
-  GENERATED TRUE
-  EXTERNAL_OBJECT TRUE
-)
+set(RPC_DIR "${CMAKE_SOURCE_DIR}/src/rpc")
+set(RPC_HEADER "${RPC_DIR}/TrayRpc_h.h")
+set(RPC_CLIENT "${RPC_DIR}/TrayRpc_c.c")
+set(RPC_SERVER "${RPC_DIR}/TrayRpc_s.c")
 
 # ---------------------------------------------------------------------------
 # Tray GUI — rbpo-app.exe (как zad-1)
@@ -123,19 +44,20 @@ set_source_files_properties("${RPC_SERVER_OBJ}" PROPERTIES
 add_executable(rbpo-app WIN32
   src/main.cpp
   src/app.rc
+  "${RPC_CLIENT}"
 )
-
-add_dependencies(rbpo-app rpc_stubs rpc_stub_objects)
 
 target_include_directories(rbpo-app PRIVATE
   ${CMAKE_SOURCE_DIR}/src
+  "${RPC_DIR}"
   ${CMAKE_SOURCE_DIR}/include
-  "${RPC_GEN_DIR}"
 )
 
 target_compile_definitions(rbpo-app PRIVATE UNICODE _UNICODE)
 
 target_compile_options(rbpo-app PRIVATE $<$<CXX_COMPILER_ID:MSVC>:/utf-8>)
+
+set_source_files_properties("${RPC_CLIENT}" PROPERTIES LANGUAGE C)
 
 target_link_libraries(rbpo-app PRIVATE
   shell32
@@ -143,7 +65,6 @@ target_link_libraries(rbpo-app PRIVATE
   gdi32
   advapi32
   rpcrt4
-  "${RPC_CLIENT_OBJ}"
 )
 
 # ---------------------------------------------------------------------------
@@ -151,18 +72,19 @@ target_link_libraries(rbpo-app PRIVATE
 # ---------------------------------------------------------------------------
 add_executable(TraySvc
   src/service_main.cpp
+  "${RPC_SERVER}"
 )
 
-add_dependencies(TraySvc rpc_stubs rpc_stub_objects)
-
 target_include_directories(TraySvc PRIVATE
+  "${RPC_DIR}"
   ${CMAKE_SOURCE_DIR}/include
-  "${RPC_GEN_DIR}"
 )
 
 target_compile_definitions(TraySvc PRIVATE UNICODE _UNICODE)
 
 target_compile_options(TraySvc PRIVATE $<$<CXX_COMPILER_ID:MSVC>:/utf-8>)
+
+set_source_files_properties("${RPC_SERVER}" PROPERTIES LANGUAGE C)
 
 target_link_libraries(TraySvc PRIVATE
   advapi32
@@ -170,7 +92,6 @@ target_link_libraries(TraySvc PRIVATE
   userenv
   rpcrt4
   user32
-  "${RPC_SERVER_OBJ}"
 )
 
 set_target_properties(TraySvc PROPERTIES WIN32_EXECUTABLE FALSE)
