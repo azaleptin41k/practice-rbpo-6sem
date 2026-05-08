@@ -19,9 +19,7 @@
 #include <vector>
 
 #include "tray_config.h"
-extern "C" {
 #include "TrayRpc_h.h"
-}
 
 #pragma comment(lib, "advapi32.lib")
 #pragma comment(lib, "wtsapi32.lib")
@@ -38,15 +36,15 @@ extern "C" {
 
 static HANDLE g_stopEvent = nullptr;
 
-extern "C" void* __RPC_USER midl_user_allocate(size_t size) {
+void* __RPC_USER midl_user_allocate(size_t size) {
   return std::malloc(size);
 }
 
-extern "C" void __RPC_USER midl_user_free(void* p) {
+void __RPC_USER midl_user_free(void* p) {
   std::free(p);
 }
 
-extern "C" void RequestStop(void) {
+void RequestStop(void) {
   if (g_stopEvent) {
     SetEvent(g_stopEvent);
   }
