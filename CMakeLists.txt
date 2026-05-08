@@ -73,10 +73,10 @@ add_custom_command(
 add_custom_target(rpc_stubs DEPENDS "${RPC_HEADER}" "${RPC_CLIENT}" "${RPC_SERVER}")
 
 # ---------------------------------------------------------------------------
-# RPC stub libraries (build generated MIDL sources as pure C)
+# RPC stub object libraries (build generated MIDL sources as pure C)
 # ---------------------------------------------------------------------------
-add_library(trayrpc_client_stub STATIC "${RPC_CLIENT}")
-add_library(trayrpc_server_stub STATIC "${RPC_SERVER}")
+add_library(trayrpc_client_stub OBJECT "${RPC_CLIENT}")
+add_library(trayrpc_server_stub OBJECT "${RPC_SERVER}")
 
 add_dependencies(trayrpc_client_stub rpc_stubs)
 add_dependencies(trayrpc_server_stub rpc_stubs)
@@ -101,6 +101,7 @@ set_source_files_properties("${RPC_SERVER}" PROPERTIES
 add_executable(rbpo-app WIN32
   src/main.cpp
   src/app.rc
+  $<TARGET_OBJECTS:trayrpc_client_stub>
 )
 
 add_dependencies(rbpo-app rpc_stubs)
@@ -121,7 +122,6 @@ target_link_libraries(rbpo-app PRIVATE
   gdi32
   advapi32
   rpcrt4
-  trayrpc_client_stub
 )
 
 # ---------------------------------------------------------------------------
@@ -129,6 +129,7 @@ target_link_libraries(rbpo-app PRIVATE
 # ---------------------------------------------------------------------------
 add_executable(TraySvc
   src/service_main.cpp
+  $<TARGET_OBJECTS:trayrpc_server_stub>
 )
 
 add_dependencies(TraySvc rpc_stubs)
@@ -148,7 +149,6 @@ target_link_libraries(TraySvc PRIVATE
   userenv
   rpcrt4
   user32
-  trayrpc_server_stub
 )
 
 set_target_properties(TraySvc PROPERTIES WIN32_EXECUTABLE FALSE)
