@@ -28,13 +28,17 @@ endif()
 # ---------------------------------------------------------------------------
 # MIDL - generate RPC stubs from the IDL file
 # ---------------------------------------------------------------------------
+if(CMAKE_HOST_SYSTEM_PROCESSOR MATCHES "ARM64|aarch64")
+    set(_MIDL_HOST_BIN arm64)
+else()
+    set(_MIDL_HOST_BIN x64)
+endif()
+
 find_program(MIDL_COMPILER midl)
 if(NOT MIDL_COMPILER)
     file(GLOB _SDK_BIN_DIRS
-        "C:/Program Files (x86)/Windows Kits/10/bin/10.*/x64"
-        "C:/Program Files (x86)/Windows Kits/10/bin/10.*/arm64"
-        "C:/Program Files (x86)/Windows Kits/10/bin/x64"
-        "C:/Program Files (x86)/Windows Kits/10/bin/arm64"
+        "C:/Program Files (x86)/Windows Kits/10/bin/10.*/${_MIDL_HOST_BIN}"
+        "C:/Program Files (x86)/Windows Kits/10/bin/${_MIDL_HOST_BIN}"
     )
     find_program(MIDL_COMPILER midl PATHS ${_SDK_BIN_DIRS})
 endif()
@@ -58,6 +62,8 @@ elseif(CMAKE_GENERATOR_PLATFORM STREQUAL "Win32")
 else()
     set(MIDL_ENV x64)
 endif()
+
+message(STATUS "MIDL compiler: ${MIDL_COMPILER} (/env ${MIDL_ENV}, host SDK ${_MIDL_HOST_BIN})")
 
 add_custom_command(
     OUTPUT "${RPC_HEADER}" "${RPC_CLIENT}" "${RPC_SERVER}"
