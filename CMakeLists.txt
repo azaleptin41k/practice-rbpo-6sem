@@ -32,7 +32,9 @@ find_program(MIDL_COMPILER midl)
 if(NOT MIDL_COMPILER)
     file(GLOB _SDK_BIN_DIRS
         "C:/Program Files (x86)/Windows Kits/10/bin/10.*/x64"
+        "C:/Program Files (x86)/Windows Kits/10/bin/10.*/arm64"
         "C:/Program Files (x86)/Windows Kits/10/bin/x64"
+        "C:/Program Files (x86)/Windows Kits/10/bin/arm64"
     )
     find_program(MIDL_COMPILER midl PATHS ${_SDK_BIN_DIRS})
 endif()
@@ -49,6 +51,14 @@ set(RPC_HEADER "${RPC_GEN_DIR}/rbpo_rpc_h.h")
 set(RPC_CLIENT "${RPC_GEN_DIR}/rbpo_rpc_c.c")
 set(RPC_SERVER "${RPC_GEN_DIR}/rbpo_rpc_s.c")
 
+if(CMAKE_GENERATOR_PLATFORM STREQUAL "ARM64")
+    set(MIDL_ENV arm64)
+elseif(CMAKE_GENERATOR_PLATFORM STREQUAL "Win32")
+    set(MIDL_ENV win32)
+else()
+    set(MIDL_ENV x64)
+endif()
+
 add_custom_command(
     OUTPUT "${RPC_HEADER}" "${RPC_CLIENT}" "${RPC_SERVER}"
     COMMAND "${MIDL_COMPILER}"
@@ -56,10 +66,11 @@ add_custom_command(
         /header rbpo_rpc_h.h
         /cstub rbpo_rpc_c.c
         /sstub rbpo_rpc_s.c
+        /env ${MIDL_ENV}
         "${IDL_FILE}"
     DEPENDS "${IDL_FILE}" "${ACF_FILE}"
     WORKING_DIRECTORY "${RPC_GEN_DIR}"
-    COMMENT "Running MIDL compiler on rbpo_rpc.idl"
+    COMMENT "Running MIDL compiler on rbpo_rpc.idl (env=${MIDL_ENV})"
 )
 
 add_custom_target(rpc_stubs DEPENDS "${RPC_HEADER}" "${RPC_CLIENT}" "${RPC_SERVER}")
