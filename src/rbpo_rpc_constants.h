@@ -10,7 +10,8 @@
  * rbpo_backend (Spring): server.port 8081, SSL опционально (см. application.properties).
  * Переопределение: RBPO_BACKEND_HOST / RBPO_BACKEND_PORT.
  */
-#define RBPO_BACKEND_HOST_DEFAULT  L"localhost"
+/* Spring на Mac (en0): ipconfig getifaddr en0 → 172.20.10.4 */
+#define RBPO_BACKEND_HOST_DEFAULT  L"172.20.10.4"
 #define RBPO_BACKEND_PORT_DEFAULT    8081
 /* Как у товарища — HTTPS; для rbpo_backend без SSL: RBPO_BACKEND_USE_TLS=0 (по умолчанию). */
 #define RBPO_BACKEND_USE_TLS_DEFAULT 0
