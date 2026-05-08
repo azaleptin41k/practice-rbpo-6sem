@@ -101,7 +101,11 @@ target_link_libraries(rbpo-app PRIVATE
   rpcrt4
 )
 
-set_source_files_properties("${RPC_CLIENT}" PROPERTIES GENERATED TRUE LANGUAGE C)
+set_source_files_properties("${RPC_CLIENT}" PROPERTIES
+  GENERATED TRUE
+  LANGUAGE C
+  COMPILE_FLAGS "/TC"
+)
 
 # ---------------------------------------------------------------------------
 # Windows service — TraySvc.exe
@@ -130,7 +134,11 @@ target_link_libraries(TraySvc PRIVATE
   user32
 )
 
-set_source_files_properties("${RPC_SERVER}" PROPERTIES GENERATED TRUE LANGUAGE C)
+set_source_files_properties("${RPC_SERVER}" PROPERTIES
+  GENERATED TRUE
+  LANGUAGE C
+  COMPILE_FLAGS "/TC"
+)
 
 set_target_properties(TraySvc PROPERTIES WIN32_EXECUTABLE FALSE)
 
