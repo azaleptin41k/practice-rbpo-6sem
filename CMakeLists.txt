@@ -73,26 +73,48 @@ add_custom_command(
 add_custom_target(rpc_stubs DEPENDS "${RPC_HEADER}" "${RPC_CLIENT}" "${RPC_SERVER}")
 
 # ---------------------------------------------------------------------------
-# RPC stub object libraries (build generated MIDL sources as pure C)
+# RPC stub objects (compile generated MIDL sources as pure C)
 # ---------------------------------------------------------------------------
-add_library(trayrpc_client_stub OBJECT "${RPC_CLIENT}")
-add_library(trayrpc_server_stub OBJECT "${RPC_SERVER}")
+set(RPC_CLIENT_OBJ "${RPC_GEN_DIR}/TrayRpc_c.obj")
+set(RPC_SERVER_OBJ "${RPC_GEN_DIR}/TrayRpc_s.obj")
 
-add_dependencies(trayrpc_client_stub rpc_stubs)
-add_dependencies(trayrpc_server_stub rpc_stubs)
-
-target_include_directories(trayrpc_client_stub PRIVATE "${RPC_GEN_DIR}")
-target_include_directories(trayrpc_server_stub PRIVATE "${RPC_GEN_DIR}")
-
-set_source_files_properties("${RPC_CLIENT}" PROPERTIES
-  GENERATED TRUE
-  LANGUAGE C
-  COMPILE_FLAGS "/TC"
+add_custom_command(
+  OUTPUT "${RPC_CLIENT_OBJ}"
+  COMMAND "${CMAKE_C_COMPILER}"
+    /nologo
+    /TC
+    /c
+    /I"${RPC_GEN_DIR}"
+    /Fo"${RPC_CLIENT_OBJ}"
+    "${RPC_CLIENT}"
+  DEPENDS "${RPC_CLIENT}" "${RPC_HEADER}"
+  WORKING_DIRECTORY "${RPC_GEN_DIR}"
+  COMMENT "Compiling TrayRpc_c.c as C"
 )
-set_source_files_properties("${RPC_SERVER}" PROPERTIES
+
+add_custom_command(
+  OUTPUT "${RPC_SERVER_OBJ}"
+  COMMAND "${CMAKE_C_COMPILER}"
+    /nologo
+    /TC
+    /c
+    /I"${RPC_GEN_DIR}"
+    /Fo"${RPC_SERVER_OBJ}"
+    "${RPC_SERVER}"
+  DEPENDS "${RPC_SERVER}" "${RPC_HEADER}"
+  WORKING_DIRECTORY "${RPC_GEN_DIR}"
+  COMMENT "Compiling TrayRpc_s.c as C"
+)
+
+add_custom_target(rpc_stub_objects DEPENDS "${RPC_CLIENT_OBJ}" "${RPC_SERVER_OBJ}")
+
+set_source_files_properties("${RPC_CLIENT_OBJ}" PROPERTIES
   GENERATED TRUE
-  LANGUAGE C
-  COMPILE_FLAGS "/TC"
+  EXTERNAL_OBJECT TRUE
+)
+set_source_files_properties("${RPC_SERVER_OBJ}" PROPERTIES
+  GENERATED TRUE
+  EXTERNAL_OBJECT TRUE
 )
 
 # ---------------------------------------------------------------------------
@@ -101,10 +123,10 @@ set_source_files_properties("${RPC_SERVER}" PROPERTIES
 add_executable(rbpo-app WIN32
   src/main.cpp
   src/app.rc
-  $<TARGET_OBJECTS:trayrpc_client_stub>
+  "${RPC_CLIENT_OBJ}"
 )
 
-add_dependencies(rbpo-app rpc_stubs)
+add_dependencies(rbpo-app rpc_stubs rpc_stub_objects)
 
 target_include_directories(rbpo-app PRIVATE
   ${CMAKE_SOURCE_DIR}/src
@@ -129,10 +151,10 @@ target_link_libraries(rbpo-app PRIVATE
 # ---------------------------------------------------------------------------
 add_executable(TraySvc
   src/service_main.cpp
-  $<TARGET_OBJECTS:trayrpc_server_stub>
+  "${RPC_SERVER_OBJ}"
 )
 
-add_dependencies(TraySvc rpc_stubs)
+add_dependencies(TraySvc rpc_stubs rpc_stub_objects)
 
 target_include_directories(TraySvc PRIVATE
   ${CMAKE_SOURCE_DIR}/include
