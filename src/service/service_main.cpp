@@ -303,23 +303,6 @@ static void WINAPI ServiceMain(DWORD, LPWSTR*)
     // NOTE: SERVICE_ACCEPT_STOP and SERVICE_ACCEPT_SHUTDOWN are deliberately omitted
     SetServiceStatus(g_hServiceStatus, &g_ServiceStatus);
 
-    // --- Requirement 1: launch app in all existing active sessions -----------
-    WTS_SESSION_INFOW* pSessions = nullptr;
-    DWORD sessionCount = 0;
-    if (WTSEnumerateSessionsW(WTS_CURRENT_SERVER_HANDLE, 0, 1,
-                               &pSessions, &sessionCount)) {
-        RBPOLog("Enumerated %u sessions", sessionCount);
-        for (DWORD i = 0; i < sessionCount; i++) {
-            RBPOLog("  Session %u: id=%u state=%d",
-                i, pSessions[i].SessionId, pSessions[i].State);
-            if (pSessions[i].SessionId != 0 && pSessions[i].State == WTSActive)
-                LaunchAppInSession(pSessions[i].SessionId);
-        }
-        WTSFreeMemory(pSessions);
-    } else {
-        RBPOLog("WTSEnumerateSessionsW failed, error=%u", GetLastError());
-    }
-
     // --- Requirement 4: start RPC server with ALPC transport -----------------
     RPC_STATUS rpcStatus;
     rpcStatus = RpcServerUseProtseqEpW(
@@ -348,10 +331,29 @@ static void WINAPI ServiceMain(DWORD, LPWSTR*)
         return;
     }
 
-    // Report SERVICE_RUNNING
+    /* RUNNING до запуска клиентов: rbpo-app проверяет SCM и ждёт SERVICE_RUNNING. */
     g_ServiceStatus.dwCurrentState = SERVICE_RUNNING;
     SetServiceStatus(g_hServiceStatus, &g_ServiceStatus);
-    RBPOLog("Service RUNNING, entering RpcServerListen...");
+    RBPOLog("Service RUNNING (before session launches)");
+
+    // --- Requirement 1: launch app in all existing active sessions -----------
+    WTS_SESSION_INFOW* pSessions = nullptr;
+    DWORD sessionCount = 0;
+    if (WTSEnumerateSessionsW(WTS_CURRENT_SERVER_HANDLE, 0, 1,
+                               &pSessions, &sessionCount)) {
+        RBPOLog("Enumerated %u sessions", sessionCount);
+        for (DWORD i = 0; i < sessionCount; i++) {
+            RBPOLog("  Session %u: id=%u state=%d",
+                i, pSessions[i].SessionId, pSessions[i].State);
+            if (pSessions[i].SessionId != 0 && pSessions[i].State == WTSActive)
+                LaunchAppInSession(pSessions[i].SessionId);
+        }
+        WTSFreeMemory(pSessions);
+    } else {
+        RBPOLog("WTSEnumerateSessionsW failed, error=%u", GetLastError());
+    }
+
+    RBPOLog("Entering RpcServerListen...");
 
     // --- Task 1.3: start auth/license background workers ----------------------
     rbpo::StateInit();

@@ -117,26 +117,49 @@ static void Log(const char* fmt, ...)
 static bool IsServiceRunning()
 {
     SC_HANDLE hSCM = OpenSCManagerW(nullptr, nullptr, SC_MANAGER_CONNECT);
-    if (!hSCM) return false;
+    if (!hSCM) {
+        Log("OpenSCManager failed, err=%lu", GetLastError());
+        return false;
+    }
+
     SC_HANDLE hSvc = OpenServiceW(hSCM, RBPO_SERVICE_NAME, SERVICE_QUERY_STATUS);
-    if (!hSvc) { CloseServiceHandle(hSCM); return false; }
+    if (!hSvc) {
+        Log("OpenService(%ls) failed, err=%lu", RBPO_SERVICE_NAME, GetLastError());
+        CloseServiceHandle(hSCM);
+        return false;
+    }
+
     SERVICE_STATUS status = {};
     QueryServiceStatus(hSvc, &status);
     CloseServiceHandle(hSvc);
     CloseServiceHandle(hSCM);
+
+    if (status.dwCurrentState != SERVICE_RUNNING)
+        Log("Service state=%lu (not RUNNING)", static_cast<unsigned long>(status.dwCurrentState));
+
     return status.dwCurrentState == SERVICE_RUNNING;
 }
 
 static bool StartServiceAndWait()
 {
     SC_HANDLE hSCM = OpenSCManagerW(nullptr, nullptr, SC_MANAGER_CONNECT);
-    if (!hSCM) return false;
+    if (!hSCM) {
+        Log("OpenSCManager (start) failed, err=%lu", GetLastError());
+        return false;
+    }
+
     SC_HANDLE hSvc = OpenServiceW(hSCM, RBPO_SERVICE_NAME,
                                    SERVICE_START | SERVICE_QUERY_STATUS);
-    if (!hSvc) { CloseServiceHandle(hSCM); return false; }
+    if (!hSvc) {
+        Log("OpenService (start) failed, err=%lu", GetLastError());
+        CloseServiceHandle(hSCM);
+        return false;
+    }
+
     if (!StartServiceW(hSvc, 0, nullptr)) {
         DWORD err = GetLastError();
         if (err != ERROR_SERVICE_ALREADY_RUNNING) {
+            Log("StartServiceW failed, err=%lu", err);
             CloseServiceHandle(hSvc);
             CloseServiceHandle(hSCM);
             return false;
@@ -148,6 +171,11 @@ static bool StartServiceAndWait()
         if (status.dwCurrentState == SERVICE_RUNNING) break;
         Sleep(500);
     }
+
+    if (status.dwCurrentState != SERVICE_RUNNING)
+        Log("Timeout waiting RUNNING, last state=%lu",
+            static_cast<unsigned long>(status.dwCurrentState));
+
     CloseServiceHandle(hSvc);
     CloseServiceHandle(hSCM);
     return status.dwCurrentState == SERVICE_RUNNING;
