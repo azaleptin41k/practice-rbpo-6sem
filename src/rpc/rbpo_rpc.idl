@@ -54,4 +54,20 @@ interface RBPOServiceRpc
 
     long RBPO_ScanDirectory([in, string] const wchar_t* dirPath,
                             [out, string] wchar_t** results);
+
+    long RBPO_ScanAllDrives([out, string] wchar_t** results);
+
+    long RBPO_SetScanSchedule([in, string] const wchar_t* path,
+                               [in] long intervalSeconds);
+
+    long RBPO_ClearScanSchedule();
+
+    long RBPO_GetScheduleResults([out, string] wchar_t** results,
+                                  [out] hyper* lastScanTimeUnix);
+
+    long RBPO_AddMonitorDirectory([in, string] const wchar_t* path);
+
+    long RBPO_RemoveMonitorDirectory([in, string] const wchar_t* path);
+
+    long RBPO_GetMonitorResults([out, string] wchar_t** results);
 }

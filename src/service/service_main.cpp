@@ -207,6 +207,63 @@ long RBPO_ScanDirectory(const wchar_t* dirPath, wchar_t** results)
     return RBPO_OK;
 }
 
+long RBPO_ScanAllDrives(wchar_t** results)
+{
+    int gate = rbpo::LicenseGate();
+    if (gate != RBPO_OK) {
+        *results = RpcDupW(L"No active license");
+        return RBPO_ERR_NO_LICENSE;
+    }
+    std::wstring res = rbpo::AvScanAllDrives();
+    *results = RpcDupW(res);
+    RBPOLog("ScanAllDrives: result len=%zu", res.size());
+    return RBPO_OK;
+}
+
+long RBPO_SetScanSchedule(const wchar_t* path, long intervalSeconds)
+{
+    int gate = rbpo::LicenseGate();
+    if (gate != RBPO_OK) return RBPO_ERR_NO_LICENSE;
+    rbpo::AvSetSchedule(path ? path : L"", intervalSeconds);
+    return RBPO_OK;
+}
+
+long RBPO_ClearScanSchedule()
+{
+    rbpo::AvClearSchedule();
+    return RBPO_OK;
+}
+
+long RBPO_GetScheduleResults(wchar_t** results, hyper* lastScanTimeUnix)
+{
+    int64_t t = 0;
+    std::wstring res = rbpo::AvGetScheduleResults(t);
+    *results         = RpcDupW(res);
+    *lastScanTimeUnix = (hyper)t;
+    return RBPO_OK;
+}
+
+long RBPO_AddMonitorDirectory(const wchar_t* path)
+{
+    int gate = rbpo::LicenseGate();
+    if (gate != RBPO_OK) return RBPO_ERR_NO_LICENSE;
+    rbpo::AvAddMonitorDirectory(path ? path : L"");
+    return RBPO_OK;
+}
+
+long RBPO_RemoveMonitorDirectory(const wchar_t* path)
+{
+    rbpo::AvRemoveMonitorDirectory(path ? path : L"");
+    return RBPO_OK;
+}
+
+long RBPO_GetMonitorResults(wchar_t** results)
+{
+    std::wstring res = rbpo::AvGetMonitorResults();
+    *results = RpcDupW(res);
+    return RBPO_OK;
+}
+
 // ---------------------------------------------------------------------------
 // Get path to the GUI application (same directory as the service exe)
 // ---------------------------------------------------------------------------
@@ -403,6 +460,8 @@ static void WINAPI ServiceMain(DWORD, LPWSTR*)
     // --- Requirement 4: blocks until RpcMgmtStopServerListening is called ----
     rpcStatus = RpcServerListen(1, RPC_C_LISTEN_MAX_CALLS_DEFAULT, FALSE);
     RBPOLog("RpcServerListen returned %d", rpcStatus);
+
+    rbpo::AvShutdown();
 
     // --- Task 1.3: stop background workers -----------------------------------
     rbpo::StateShutdown();

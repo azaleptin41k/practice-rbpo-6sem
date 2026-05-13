@@ -15,6 +15,7 @@
 #include <cstdlib>
 #include <cstdio>
 #include <cstdarg>
+#include <ctime>
 #include <string>
 #include "resource.h"
 #include "rbpo_rpc_h.h"
@@ -56,6 +57,11 @@ static HWND h_userLbl = nullptr,   h_licLbl = nullptr,
             h_logoutBtn = nullptr;
 // AV scanning controls (licensed pane)
 static HWND h_avDbLbl = nullptr, h_scanFileBtn = nullptr, h_scanDirBtn = nullptr;
+static HWND h_scanAllDrivesBtn = nullptr;
+static HWND h_schedPathEdit = nullptr, h_schedIntvEdit = nullptr;
+static HWND h_schedSetBtn = nullptr, h_schedClearBtn = nullptr, h_schedResultsBtn = nullptr;
+static HWND h_monPathEdit = nullptr, h_monAddBtn = nullptr, h_monRemoveBtn = nullptr;
+static HWND h_monResultsBtn = nullptr;
 
 // ---------------------------------------------------------------------------
 // Forward declarations
@@ -80,6 +86,13 @@ static void DoLogout();
 static void DoActivate();
 static void DoScanFile();
 static void DoScanDirectory();
+static void DoScanAllDrives();
+static void DoSetSchedule();
+static void DoClearSchedule();
+static void DoGetScheduleResults();
+static void DoAddMonitor();
+static void DoRemoveMonitor();
+static void DoGetMonitorResults();
 
 // ---------------------------------------------------------------------------
 // RPC memory allocation
@@ -306,7 +319,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR pCmdLine, int)
     g_hWnd = CreateWindowExW(
         0, WINDOW_CLASS, WINDOW_TITLE,
         WS_OVERLAPPEDWINDOW,
-        CW_USEDEFAULT, CW_USEDEFAULT, 580, 460,
+        CW_USEDEFAULT, CW_USEDEFAULT, 580, 480,
         nullptr, nullptr, hInstance, nullptr);
     if (!g_hWnd) { CloseHandle(g_hMutex); return 1; }
 
@@ -464,6 +477,76 @@ static int RpcScanDirectory(const std::wstring& path, std::wstring& results)
     return (int)rc;
 }
 
+static int RpcScanAllDrives(std::wstring& results)
+{
+    if (!BindRpc()) return RBPO_ERR_NETWORK;
+    long rc = RBPO_ERR_GENERIC; wchar_t* r = nullptr;
+    RpcTryExcept { rc = RBPO_ScanAllDrives(&r); }
+    RpcExcept(1)  { return RBPO_ERR_NETWORK; } RpcEndExcept
+    results = r ? r : L"";
+    if (r) midl_user_free(r);
+    return (int)rc;
+}
+
+static int RpcSetScanSchedule(const std::wstring& path, long interval)
+{
+    if (!BindRpc()) return RBPO_ERR_NETWORK;
+    long rc = RBPO_ERR_GENERIC;
+    RpcTryExcept { rc = RBPO_SetScanSchedule(path.c_str(), interval); }
+    RpcExcept(1)  { return RBPO_ERR_NETWORK; } RpcEndExcept
+    return (int)rc;
+}
+
+static int RpcClearScanSchedule()
+{
+    if (!BindRpc()) return RBPO_ERR_NETWORK;
+    long rc = RBPO_ERR_GENERIC;
+    RpcTryExcept { rc = RBPO_ClearScanSchedule(); }
+    RpcExcept(1)  { return RBPO_ERR_NETWORK; } RpcEndExcept
+    return (int)rc;
+}
+
+static int RpcGetScheduleResults(std::wstring& results, int64_t& lastTime)
+{
+    if (!BindRpc()) return RBPO_ERR_NETWORK;
+    long rc = RBPO_ERR_GENERIC; wchar_t* r = nullptr; __int64 t = 0;
+    RpcTryExcept { rc = RBPO_GetScheduleResults(&r, &t); }
+    RpcExcept(1)  { return RBPO_ERR_NETWORK; } RpcEndExcept
+    results  = r ? r : L"";
+    lastTime = (int64_t)t;
+    if (r) midl_user_free(r);
+    return (int)rc;
+}
+
+static int RpcAddMonitorDirectory(const std::wstring& path)
+{
+    if (!BindRpc()) return RBPO_ERR_NETWORK;
+    long rc = RBPO_ERR_GENERIC;
+    RpcTryExcept { rc = RBPO_AddMonitorDirectory(path.c_str()); }
+    RpcExcept(1)  { return RBPO_ERR_NETWORK; } RpcEndExcept
+    return (int)rc;
+}
+
+static int RpcRemoveMonitorDirectory(const std::wstring& path)
+{
+    if (!BindRpc()) return RBPO_ERR_NETWORK;
+    long rc = RBPO_ERR_GENERIC;
+    RpcTryExcept { rc = RBPO_RemoveMonitorDirectory(path.c_str()); }
+    RpcExcept(1)  { return RBPO_ERR_NETWORK; } RpcEndExcept
+    return (int)rc;
+}
+
+static int RpcGetMonitorResults(std::wstring& results)
+{
+    if (!BindRpc()) return RBPO_ERR_NETWORK;
+    long rc = RBPO_ERR_GENERIC; wchar_t* r = nullptr;
+    RpcTryExcept { rc = RBPO_GetMonitorResults(&r); }
+    RpcExcept(1)  { return RBPO_ERR_NETWORK; } RpcEndExcept
+    results = r ? r : L"";
+    if (r) midl_user_free(r);
+    return (int)rc;
+}
+
 // ---------------------------------------------------------------------------
 // UI construction helpers
 // ---------------------------------------------------------------------------
@@ -482,6 +565,10 @@ static void DestroyAllPanes()
     h_loginEmail = h_loginPass = h_loginBtn = h_loginStatus = nullptr;
     h_userLbl = h_licLbl = h_actKey = h_actBtn = h_actStatus = h_avBtn = h_logoutBtn = nullptr;
     h_avDbLbl = h_scanFileBtn = h_scanDirBtn = nullptr;
+    h_scanAllDrivesBtn = nullptr;
+    h_schedPathEdit = h_schedIntvEdit = nullptr;
+    h_schedSetBtn = h_schedClearBtn = h_schedResultsBtn = nullptr;
+    h_monPathEdit = h_monAddBtn = h_monRemoveBtn = h_monResultsBtn = nullptr;
     g_currentPane = PANE_NONE;
 }
 
@@ -566,25 +653,81 @@ static void BuildMainPane(HWND hWnd, bool licensed,
 
         SetFocus(h_actKey);
     } else {
-        h_avBtn = CreateWindowExW(0, L"BUTTON", L"Проверить AV модуль",
+        h_avBtn = CreateWindowExW(0, L"BUTTON", L"Проверить AV",
             WS_CHILD | WS_VISIBLE,
-            20, 94, 200, 30, hWnd, (HMENU)IDC_AV_BUTTON, g_hInstance, nullptr);
+            20, 96, 130, 28, hWnd, (HMENU)IDC_AV_BUTTON, g_hInstance, nullptr);
         SetCtrlFont(h_avBtn);
+
+        h_scanFileBtn = CreateWindowExW(0, L"BUTTON", L"Скан файл",
+            WS_CHILD | WS_VISIBLE,
+            158, 96, 130, 28, hWnd, (HMENU)IDC_SCAN_FILE_BTN, g_hInstance, nullptr);
+        SetCtrlFont(h_scanFileBtn);
+
+        h_scanDirBtn = CreateWindowExW(0, L"BUTTON", L"Скан папку",
+            WS_CHILD | WS_VISIBLE,
+            296, 96, 130, 28, hWnd, (HMENU)IDC_SCAN_DIR_BTN, g_hInstance, nullptr);
+        SetCtrlFont(h_scanDirBtn);
 
         h_avDbLbl = CreateWindowExW(0, L"STATIC", L"База: загрузка...",
             WS_CHILD | WS_VISIBLE | SS_LEFT,
-            20, 140, 520, 20, hWnd, (HMENU)IDC_AV_DB_LABEL, g_hInstance, nullptr);
+            20, 134, 520, 18, hWnd, (HMENU)IDC_AV_DB_LABEL, g_hInstance, nullptr);
         SetCtrlFont(h_avDbLbl);
 
-        h_scanFileBtn = CreateWindowExW(0, L"BUTTON", L"Сканировать файл",
+        h_scanAllDrivesBtn = CreateWindowExW(0, L"BUTTON", L"Скан все диски",
             WS_CHILD | WS_VISIBLE,
-            20, 170, 180, 30, hWnd, (HMENU)IDC_SCAN_FILE_BTN, g_hInstance, nullptr);
-        SetCtrlFont(h_scanFileBtn);
+            20, 158, 170, 28, hWnd, (HMENU)IDC_SCAN_ALL_DRIVES, g_hInstance, nullptr);
+        SetCtrlFont(h_scanAllDrivesBtn);
 
-        h_scanDirBtn = CreateWindowExW(0, L"BUTTON", L"Сканировать папку",
+        S(L"Расписание сканирования:", 20, 196, 250, 18);
+
+        h_schedPathEdit = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"",
+            WS_CHILD | WS_VISIBLE | ES_AUTOHSCROLL,
+            20, 218, 230, 24, hWnd, (HMENU)IDC_SCHED_PATH_EDIT, g_hInstance, nullptr);
+        SetCtrlFont(h_schedPathEdit);
+
+        h_schedIntvEdit = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"3600",
+            WS_CHILD | WS_VISIBLE | ES_AUTOHSCROLL | ES_NUMBER,
+            258, 218, 60, 24, hWnd, (HMENU)IDC_SCHED_INTV_EDIT, g_hInstance, nullptr);
+        SetCtrlFont(h_schedIntvEdit);
+
+        S(L"сек", 325, 222, 30, 18);
+
+        h_schedSetBtn = CreateWindowExW(0, L"BUTTON", L"Установить",
             WS_CHILD | WS_VISIBLE,
-            210, 170, 180, 30, hWnd, (HMENU)IDC_SCAN_DIR_BTN, g_hInstance, nullptr);
-        SetCtrlFont(h_scanDirBtn);
+            360, 216, 90, 28, hWnd, (HMENU)IDC_SCHED_SET_BTN, g_hInstance, nullptr);
+        SetCtrlFont(h_schedSetBtn);
+
+        h_schedClearBtn = CreateWindowExW(0, L"BUTTON", L"Сбросить",
+            WS_CHILD | WS_VISIBLE,
+            458, 216, 80, 28, hWnd, (HMENU)IDC_SCHED_CLEAR_BTN, g_hInstance, nullptr);
+        SetCtrlFont(h_schedClearBtn);
+
+        h_schedResultsBtn = CreateWindowExW(0, L"BUTTON", L"Результаты расписания",
+            WS_CHILD | WS_VISIBLE,
+            20, 250, 210, 28, hWnd, (HMENU)IDC_SCHED_RESULTS_BTN, g_hInstance, nullptr);
+        SetCtrlFont(h_schedResultsBtn);
+
+        S(L"Мониторинг директорий:", 20, 290, 250, 18);
+
+        h_monPathEdit = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"",
+            WS_CHILD | WS_VISIBLE | ES_AUTOHSCROLL,
+            20, 312, 280, 24, hWnd, (HMENU)IDC_MON_PATH_EDIT, g_hInstance, nullptr);
+        SetCtrlFont(h_monPathEdit);
+
+        h_monAddBtn = CreateWindowExW(0, L"BUTTON", L"Добавить",
+            WS_CHILD | WS_VISIBLE,
+            308, 310, 90, 28, hWnd, (HMENU)IDC_MON_ADD_BTN, g_hInstance, nullptr);
+        SetCtrlFont(h_monAddBtn);
+
+        h_monRemoveBtn = CreateWindowExW(0, L"BUTTON", L"Удалить",
+            WS_CHILD | WS_VISIBLE,
+            406, 310, 90, 28, hWnd, (HMENU)IDC_MON_REMOVE_BTN, g_hInstance, nullptr);
+        SetCtrlFont(h_monRemoveBtn);
+
+        h_monResultsBtn = CreateWindowExW(0, L"BUTTON", L"Результаты мониторинга",
+            WS_CHILD | WS_VISIBLE,
+            20, 346, 230, 28, hWnd, (HMENU)IDC_MON_RESULTS_BTN, g_hInstance, nullptr);
+        SetCtrlFont(h_monResultsBtn);
 
         std::wstring dbDate; long dbCount = 0;
         if (RpcGetAvDbInfo(dbDate, dbCount) == RBPO_OK) {
@@ -596,7 +739,7 @@ static void BuildMainPane(HWND hWnd, bool licensed,
 
     h_logoutBtn = CreateWindowExW(0, L"BUTTON", L"Выйти из аккаунта",
         WS_CHILD | WS_VISIBLE,
-        20, 360, 170, 28, hWnd, (HMENU)IDC_LOGOUT_BUTTON, g_hInstance, nullptr);
+        20, 390, 170, 28, hWnd, (HMENU)IDC_LOGOUT_BUTTON, g_hInstance, nullptr);
     SetCtrlFont(h_logoutBtn);
 }
 
@@ -724,6 +867,143 @@ static void DoActivate()
     }
     SetWindowTextW(h_actKey, L"");
     RefreshUI();
+}
+
+static void DoScanAllDrives()
+{
+    std::wstring results;
+    int rc = RpcScanAllDrives(results);
+    if (rc == RBPO_ERR_NO_LICENSE) {
+        MessageBoxW(g_hWnd, L"Требуется активная лицензия",
+                    L"Сканирование дисков", MB_OK | MB_ICONWARNING);
+        return;
+    }
+    if (rc != RBPO_OK) {
+        MessageBoxW(g_hWnd, L"Ошибка связи со службой",
+                    L"Сканирование дисков", MB_OK | MB_ICONERROR);
+        return;
+    }
+    bool clean = (results == L"No threats detected");
+    MessageBoxW(g_hWnd, results.c_str(),
+                clean ? L"Диски чисты" : L"Обнаружены угрозы",
+                MB_OK | (clean ? MB_ICONINFORMATION : MB_ICONWARNING));
+}
+
+static void DoSetSchedule()
+{
+    if (!h_schedPathEdit || !h_schedIntvEdit) return;
+    std::wstring path    = GetEditText(h_schedPathEdit);
+    std::wstring intvStr = GetEditText(h_schedIntvEdit);
+    if (path.empty()) {
+        MessageBoxW(g_hWnd, L"Введите путь для сканирования",
+                    L"Расписание", MB_OK | MB_ICONWARNING);
+        return;
+    }
+    long interval = intvStr.empty() ? 3600L : (long)_wtoi(intvStr.c_str());
+    int rc = RpcSetScanSchedule(path, interval);
+    if (rc == RBPO_ERR_NO_LICENSE) {
+        MessageBoxW(g_hWnd, L"Требуется активная лицензия",
+                    L"Расписание", MB_OK | MB_ICONWARNING);
+        return;
+    }
+    std::wstring msg = (rc == RBPO_OK)
+        ? (L"Расписание установлено.\nПуть: " + path +
+           L"\nИнтервал: " + std::to_wstring(interval) + L" сек")
+        : L"Ошибка связи со службой";
+    MessageBoxW(g_hWnd, msg.c_str(), L"Расписание", MB_OK | MB_ICONINFORMATION);
+}
+
+static void DoClearSchedule()
+{
+    int rc = RpcClearScanSchedule();
+    MessageBoxW(g_hWnd,
+                rc == RBPO_OK ? L"Расписание сброшено" : L"Ошибка связи со службой",
+                L"Расписание", MB_OK | MB_ICONINFORMATION);
+}
+
+static void DoGetScheduleResults()
+{
+    std::wstring results; int64_t lastTime = 0;
+    int rc = RpcGetScheduleResults(results, lastTime);
+    if (rc != RBPO_OK) {
+        MessageBoxW(g_hWnd, L"Ошибка связи со службой",
+                    L"Расписание — результаты", MB_OK | MB_ICONERROR);
+        return;
+    }
+    std::wstring msg;
+    if (lastTime > 0) {
+        time_t t = (time_t)lastTime;
+        char tbuf[64] = {};
+        struct tm tms = {};
+        localtime_s(&tms, &t);
+        strftime(tbuf, sizeof(tbuf), "%Y-%m-%d %H:%M:%S", &tms);
+        wchar_t wtbuf[64] = {};
+        MultiByteToWideChar(CP_ACP, 0, tbuf, -1, wtbuf, 64);
+        msg = std::wstring(L"Последнее сканирование: ") + wtbuf + L"\n\n";
+    } else {
+        msg = L"Сканирование ещё не выполнялось.\n\n";
+    }
+    msg += results;
+    bool clean = (results == L"No scan results yet" || results == L"No threats detected");
+    MessageBoxW(g_hWnd, msg.c_str(),
+                clean ? L"Угрозы не обнаружены" : L"Обнаружены угрозы",
+                MB_OK | (clean ? MB_ICONINFORMATION : MB_ICONWARNING));
+}
+
+static void DoAddMonitor()
+{
+    if (!h_monPathEdit) return;
+    std::wstring path = GetEditText(h_monPathEdit);
+    if (path.empty()) {
+        wchar_t dirPath[MAX_PATH] = {};
+        BROWSEINFOW bi = {};
+        bi.hwndOwner = g_hWnd;
+        bi.lpszTitle = L"Выберите директорию для мониторинга";
+        bi.ulFlags   = BIF_RETURNONLYFSDIRS | BIF_NEWDIALOGSTYLE;
+        PIDLIST_ABSOLUTE pidl = SHBrowseForFolderW(&bi);
+        if (!pidl) return;
+        SHGetPathFromIDListW(pidl, dirPath);
+        CoTaskMemFree(pidl);
+        path = dirPath;
+        SetWindowTextW(h_monPathEdit, path.c_str());
+    }
+    int rc = RpcAddMonitorDirectory(path);
+    if (rc == RBPO_ERR_NO_LICENSE) {
+        MessageBoxW(g_hWnd, L"Требуется активная лицензия",
+                    L"Мониторинг", MB_OK | MB_ICONWARNING);
+        return;
+    }
+    std::wstring msg = (rc == RBPO_OK)
+        ? (L"Мониторинг запущен:\n" + path)
+        : L"Ошибка связи со службой";
+    MessageBoxW(g_hWnd, msg.c_str(), L"Мониторинг", MB_OK | MB_ICONINFORMATION);
+}
+
+static void DoRemoveMonitor()
+{
+    if (!h_monPathEdit) return;
+    std::wstring path = GetEditText(h_monPathEdit);
+    if (path.empty()) return;
+    int rc = RpcRemoveMonitorDirectory(path);
+    std::wstring msg = (rc == RBPO_OK)
+        ? (L"Мониторинг остановлен:\n" + path)
+        : L"Ошибка связи со службой";
+    MessageBoxW(g_hWnd, msg.c_str(), L"Мониторинг", MB_OK | MB_ICONINFORMATION);
+}
+
+static void DoGetMonitorResults()
+{
+    std::wstring results;
+    int rc = RpcGetMonitorResults(results);
+    if (rc != RBPO_OK) {
+        MessageBoxW(g_hWnd, L"Ошибка связи со службой",
+                    L"Мониторинг — результаты", MB_OK | MB_ICONERROR);
+        return;
+    }
+    bool clean = (results == L"No threats detected");
+    MessageBoxW(g_hWnd, results.c_str(),
+                clean ? L"Угрозы не обнаружены" : L"Обнаружены угрозы (мониторинг)",
+                MB_OK | (clean ? MB_ICONINFORMATION : MB_ICONWARNING));
 }
 
 static void DoScanFile()
@@ -869,6 +1149,27 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
             break;
         case IDC_SCAN_DIR_BTN:
             DoScanDirectory();
+            break;
+        case IDC_SCAN_ALL_DRIVES:
+            DoScanAllDrives();
+            break;
+        case IDC_SCHED_SET_BTN:
+            DoSetSchedule();
+            break;
+        case IDC_SCHED_CLEAR_BTN:
+            DoClearSchedule();
+            break;
+        case IDC_SCHED_RESULTS_BTN:
+            DoGetScheduleResults();
+            break;
+        case IDC_MON_ADD_BTN:
+            DoAddMonitor();
+            break;
+        case IDC_MON_REMOVE_BTN:
+            DoRemoveMonitor();
+            break;
+        case IDC_MON_RESULTS_BTN:
+            DoGetMonitorResults();
             break;
         }
         return 0;

@@ -20,6 +20,7 @@ struct AvRecord {
     int64_t              offsetEnd;
     AvObjectType         type;
     std::vector<uint8_t> recordSig;
+    std::vector<uint8_t> sigBytes;
 };
 
 struct AvDbInfo {
@@ -28,8 +29,18 @@ struct AvDbInfo {
 };
 
 void         AvLoad();
+void         AvShutdown();
 AvDbInfo     AvGetInfo();
 bool         AvScanFile(const std::wstring& path, std::wstring& threatName);
 std::wstring AvScanDirectory(const std::wstring& dirPath);
+std::wstring AvScanAllDrives();
+
+void         AvSetSchedule(const std::wstring& path, long intervalSeconds);
+void         AvClearSchedule();
+std::wstring AvGetScheduleResults(int64_t& lastScanTimeUnix);
+
+void         AvAddMonitorDirectory(const std::wstring& path);
+void         AvRemoveMonitorDirectory(const std::wstring& path);
+std::wstring AvGetMonitorResults();
 
 } // namespace rbpo
