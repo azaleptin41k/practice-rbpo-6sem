@@ -21,6 +21,8 @@ struct AvRecord {
     AvObjectType         type;
     std::vector<uint8_t> recordSig;
     std::vector<uint8_t> sigBytes;
+    bool                 hasRemainderHash = false;
+    std::wstring         threatName;
 };
 
 struct AvDbInfo {
@@ -29,6 +31,7 @@ struct AvDbInfo {
 };
 
 void         AvLoad();
+void         AvLoadFromBackend(const std::string& accessToken);
 void         AvShutdown();
 AvDbInfo     AvGetInfo();
 bool         AvScanFile(const std::wstring& path, std::wstring& threatName);

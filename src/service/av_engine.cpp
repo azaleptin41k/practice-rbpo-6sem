@@ -12,6 +12,8 @@
 #include <cstring>
 #include <ctime>
 #include "av_engine.h"
+#include "http_client.h"
+#include "json_util.h"
 
 #pragma comment(lib, "bcrypt.lib")
 
@@ -184,6 +186,100 @@ AvDbInfo AvGetInfo()
     return info;
 }
 
+static std::vector<uint8_t> HexDecode(const std::string& hex)
+{
+    std::vector<uint8_t> out;
+    out.reserve(hex.size() / 2);
+    for (size_t i = 0; i + 1 < hex.size(); i += 2) {
+        auto hc = [](char c) -> uint8_t {
+            if (c >= '0' && c <= '9') return (uint8_t)(c - '0');
+            if (c >= 'a' && c <= 'f') return (uint8_t)(c - 'a' + 10);
+            if (c >= 'A' && c <= 'F') return (uint8_t)(c - 'A' + 10);
+            return 0;
+        };
+        out.push_back((uint8_t)((hc(hex[i]) << 4) | hc(hex[i + 1])));
+    }
+    return out;
+}
+
+static std::vector<std::string> SplitJsonObjects(const std::string& json)
+{
+    std::vector<std::string> objs;
+    for (size_t i = 0; i < json.size(); i++) {
+        if (json[i] != '{') continue;
+        int depth = 0;
+        size_t start = i;
+        for (; i < json.size(); i++) {
+            if (json[i] == '{') depth++;
+            else if (json[i] == '}') { if (--depth == 0) { i++; break; } }
+        }
+        objs.push_back(json.substr(start, i - start));
+    }
+    return objs;
+}
+
+void AvLoadFromBackend(const std::string& accessToken)
+{
+    std::wstring host; int port;
+    GetBackend(host, port);
+    auto resp = HttpsRequest(host, port, L"GET", L"/api/signatures", "", accessToken);
+    if (resp.transportError || resp.status / 100 != 2) {
+        RBPOLog("AvLoadFromBackend: HTTP %d", resp.status);
+        return;
+    }
+
+    auto objs = SplitJsonObjects(resp.body);
+    std::vector<AvRecord> newRecords;
+    for (const auto& obj : objs) {
+        if (JsonExtractString(obj, "status") != "ACTUAL") continue;
+        std::string firstHex  = JsonExtractString(obj, "firstBytesHex");
+        std::string remHex    = JsonExtractString(obj, "remainderHashHex");
+        std::string fileType  = JsonExtractString(obj, "fileType");
+        std::string threat    = JsonExtractString(obj, "threatName");
+        long long   remLen    = JsonExtractNumber(obj, "remainderLength");
+        long long   offStart  = JsonExtractNumber(obj, "offsetStart");
+        long long   offEnd    = JsonExtractNumber(obj, "offsetEnd");
+        if (firstHex.empty()) continue;
+
+        std::vector<uint8_t> firstBytes = HexDecode(firstHex);
+        if (firstBytes.size() < 8) continue;
+
+        AvRecord r;
+        r.prefix = 0;
+        for (int i = 0; i < 8; i++)
+            r.prefix |= ((uint64_t)firstBytes[i] << (i * 8));
+        r.sigLen            = (uint32_t)(firstBytes.size() + (size_t)remLen);
+        r.sigBytes          = firstBytes;
+        r.sigHash           = remHex.empty() ? std::vector<uint8_t>{} : HexDecode(remHex);
+        r.hasRemainderHash  = (remLen > 0 && !remHex.empty());
+        r.offsetBegin       = offStart;
+        r.offsetEnd         = offEnd;
+        r.type              = (fileType == "PE") ? AvObjectType::PE : AvObjectType::Script;
+        r.threatName        = Utf8ToWide(threat);
+        newRecords.push_back(std::move(r));
+    }
+
+    if (newRecords.empty()) {
+        RBPOLog("AvLoadFromBackend: no ACTUAL records");
+        return;
+    }
+
+    std::lock_guard<std::mutex> lk(g_dbMtx);
+    g_db.clear();
+    g_allRecords.clear();
+    for (auto& r : newRecords) {
+        g_db[r.prefix].push_back(r);
+        g_allRecords.push_back(std::move(r));
+    }
+    SYSTEMTIME st; GetSystemTime(&st);
+    wchar_t dateBuf[32];
+    swprintf_s(dateBuf, L"%04d-%02d-%02d", st.wYear, st.wMonth, st.wDay);
+    g_dbDate  = dateBuf;
+    g_dbCount = (uint32_t)g_allRecords.size();
+    AcBuild();
+    RBPOLog("AvLoadFromBackend: loaded %u records", g_dbCount);
+}
+
 // --- Scanning via Aho-Corasick ---
 
 static bool ScanStream(const std::vector<uint8_t>& data,
@@ -201,8 +297,16 @@ static bool ScanStream(const std::vector<uint8_t>& data,
             int64_t matchPos = (int64_t)(i + 1 - rec.sigBytes.size());
             if (rec.offsetBegin >= 0 && matchPos < rec.offsetBegin) continue;
             if (rec.offsetEnd   >= 0 && matchPos > rec.offsetEnd)   continue;
-            threatName = std::wstring(L"RBPO.Test.") +
-                         (rec.type == AvObjectType::PE ? L"PE.Virus" : L"Script.Virus");
+            if (rec.hasRemainderHash) {
+                size_t remLen   = rec.sigLen - (uint32_t)rec.sigBytes.size();
+                size_t remStart = (size_t)matchPos + rec.sigBytes.size();
+                if (remStart + remLen > data.size()) continue;
+                auto h = Sha256(data.data() + remStart, remLen);
+                if (h != rec.sigHash) continue;
+            }
+            threatName = rec.threatName.empty()
+                ? std::wstring(L"RBPO.") + (rec.type == AvObjectType::PE ? L"PE.Virus" : L"Script.Virus")
+                : rec.threatName;
             return true;
         }
     }

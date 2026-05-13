@@ -115,6 +115,8 @@ long RBPO_Login(const wchar_t* email, const wchar_t* password, wchar_t** errorMe
     std::wstring err;
     int rc = rbpo::Login(email ? email : L"", password ? password : L"", err);
     *errorMessage = RpcDupW(err);
+    if (rc == RBPO_OK)
+        rbpo::AvLoadFromBackend(rbpo::StateGetAccessToken());
     return rc;
 }
 

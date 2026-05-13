@@ -552,6 +552,11 @@ LicenseInfo GetLicenseInfo() {
     return l;
 }
 
+std::string StateGetAccessToken() {
+    std::lock_guard<std::mutex> lk(g_mtx);
+    return g_accessToken;
+}
+
 int Login(const std::wstring& email, const std::wstring& password,
           std::wstring& errorMessage)
 {
