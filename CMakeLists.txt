@@ -101,7 +101,7 @@ target_compile_definitions(${PROJECT_NAME} PRIVATE UNICODE _UNICODE)
 # UTF-8 source and execution character set (for Cyrillic strings)
 target_compile_options(${PROJECT_NAME} PRIVATE $<$<CXX_COMPILER_ID:MSVC>:/utf-8>)
 
-target_link_libraries(${PROJECT_NAME} PRIVATE shell32 rpcrt4 advapi32 ole32)
+target_link_libraries(${PROJECT_NAME} PRIVATE shell32 rpcrt4 advapi32 ole32 comdlg32)
 
 # ---------------------------------------------------------------------------
 # Windows Service target

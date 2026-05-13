@@ -11,6 +11,7 @@
 #include <windows.h>
 #include <shellapi.h>
 #include <shlobj.h>
+#include <commdlg.h>
 #include <tlhelp32.h>
 #include <cstdlib>
 #include <cstdio>
@@ -32,7 +33,7 @@ static const wchar_t WINDOW_CLASS[]   = L"RBPOTrayAppClass";
 static const wchar_t WINDOW_TITLE[]   = L"РБПО — Tray Application";
 
 // UI panes
-enum Pane { PANE_NONE = 0, PANE_LOGIN, PANE_ACTIVATE, PANE_LICENSED };
+enum class Pane { None = 0, Login, Activate, Licensed };
 
 // ---------------------------------------------------------------------------
 // Globals
@@ -44,7 +45,7 @@ static UINT            WM_TASKBARCREATED = 0;
 static HANDLE          g_hMutex          = nullptr;
 static HFONT           g_hFont           = nullptr;
 
-static Pane            g_currentPane     = PANE_NONE;
+static Pane            g_currentPane     = Pane::None;
 static bool            g_rpcBound        = false;
 
 // login pane controls
@@ -569,13 +570,13 @@ static void DestroyAllPanes()
     h_schedPathEdit = h_schedIntvEdit = nullptr;
     h_schedSetBtn = h_schedClearBtn = h_schedResultsBtn = nullptr;
     h_monPathEdit = h_monAddBtn = h_monRemoveBtn = h_monResultsBtn = nullptr;
-    g_currentPane = PANE_NONE;
+    g_currentPane = Pane::None;
 }
 
 static void BuildLoginPane(HWND hWnd)
 {
     DestroyAllPanes();
-    g_currentPane = PANE_LOGIN;
+    g_currentPane = Pane::Login;
 
     auto S = [&](const wchar_t* t, int x, int y, int w, int h) {
         HWND hw = CreateWindowExW(0, L"STATIC", t, WS_CHILD | WS_VISIBLE | SS_LEFT,
@@ -615,7 +616,7 @@ static void BuildMainPane(HWND hWnd, bool licensed,
                           const std::wstring& licText)
 {
     DestroyAllPanes();
-    g_currentPane = licensed ? PANE_LICENSED : PANE_ACTIVATE;
+    g_currentPane = licensed ? Pane::Licensed : Pane::Activate;
 
     auto S = [&](const wchar_t* t, int x, int y, int w, int h) {
         HWND hw = CreateWindowExW(0, L"STATIC", t, WS_CHILD | WS_VISIBLE | SS_LEFT,
@@ -751,13 +752,13 @@ static void RefreshUI()
     bool authed = false; std::wstring email, name;
     int rc = RpcGetCurrentUser(authed, email, name);
     if (rc != RBPO_OK) {
-        if (g_currentPane != PANE_LOGIN) BuildLoginPane(g_hWnd);
+        if (g_currentPane != Pane::Login) BuildLoginPane(g_hWnd);
         if (h_loginStatus) SetWindowTextW(h_loginStatus, L"Нет связи со службой");
         return;
     }
 
     if (!authed) {
-        if (g_currentPane != PANE_LOGIN) BuildLoginPane(g_hWnd);
+        if (g_currentPane != Pane::Login) BuildLoginPane(g_hWnd);
         return;
     }
 
@@ -773,7 +774,7 @@ static void RefreshUI()
 
     if (activeLicense) {
         std::wstring licText = L"Лицензия активна до: " + expIso;
-        if (g_currentPane != PANE_LICENSED) {
+        if (g_currentPane != Pane::Licensed) {
             BuildMainPane(g_hWnd, true, userText, licText);
         } else {
             SetWindowTextW(h_userLbl, userText.c_str());
@@ -791,7 +792,7 @@ static void RefreshUI()
             licText = L"Лицензия истекла";
         else
             licText = L"Лицензия отсутствует";
-        if (g_currentPane != PANE_ACTIVATE) {
+        if (g_currentPane != Pane::Activate) {
             BuildMainPane(g_hWnd, false, userText, licText);
         } else {
             SetWindowTextW(h_userLbl, userText.c_str());

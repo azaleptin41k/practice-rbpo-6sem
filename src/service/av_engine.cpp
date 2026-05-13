@@ -140,6 +140,11 @@ static void AcBuild()
     }
 }
 
+static std::thread        g_schedThread;
+static HANDLE             g_schedWake     = nullptr;
+static std::atomic<bool>  g_schedStop{false};
+static void SchedulerWorker();
+
 void AvLoad()
 {
     std::lock_guard<std::mutex> lk(g_dbMtx);
@@ -409,9 +414,6 @@ static std::wstring       g_schedPath;
 static long               g_schedInterval = 0;
 static std::wstring       g_schedResults;
 static int64_t            g_schedLastRun  = 0;
-static std::thread        g_schedThread;
-static HANDLE             g_schedWake     = nullptr;
-static std::atomic<bool>  g_schedStop{false};
 
 static void SchedulerWorker()
 {
