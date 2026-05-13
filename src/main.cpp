@@ -10,6 +10,7 @@
 
 #include <windows.h>
 #include <shellapi.h>
+#include <shlobj.h>
 #include <tlhelp32.h>
 #include <cstdlib>
 #include <cstdio>
@@ -53,6 +54,8 @@ static HWND h_userLbl = nullptr,   h_licLbl = nullptr,
             h_actKey  = nullptr,   h_actBtn = nullptr,
             h_actStatus = nullptr, h_avBtn = nullptr,
             h_logoutBtn = nullptr;
+// AV scanning controls (licensed pane)
+static HWND h_avDbLbl = nullptr, h_scanFileBtn = nullptr, h_scanDirBtn = nullptr;
 
 // ---------------------------------------------------------------------------
 // Forward declarations
@@ -75,6 +78,8 @@ static void BuildMainPane(HWND hWnd, bool licensed,
 static void DoLogin();
 static void DoLogout();
 static void DoActivate();
+static void DoScanFile();
+static void DoScanDirectory();
 
 // ---------------------------------------------------------------------------
 // RPC memory allocation
@@ -301,7 +306,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR pCmdLine, int)
     g_hWnd = CreateWindowExW(
         0, WINDOW_CLASS, WINDOW_TITLE,
         WS_OVERLAPPEDWINDOW,
-        CW_USEDEFAULT, CW_USEDEFAULT, 560, 380,
+        CW_USEDEFAULT, CW_USEDEFAULT, 580, 460,
         nullptr, nullptr, hInstance, nullptr);
     if (!g_hWnd) { CloseHandle(g_hMutex); return 1; }
 
@@ -424,6 +429,41 @@ static int RpcAVPing(std::wstring& message)
     return (int)rc;
 }
 
+static int RpcGetAvDbInfo(std::wstring& date, long& count)
+{
+    if (!BindRpc()) return RBPO_ERR_NETWORK;
+    long rc = RBPO_ERR_GENERIC; wchar_t* d = nullptr; long cnt = 0;
+    RpcTryExcept { rc = RBPO_GetAvDbInfo(&d, &cnt); }
+    RpcExcept(1)  { return RBPO_ERR_NETWORK; } RpcEndExcept
+    date  = d ? d : L"";
+    count = cnt;
+    if (d) midl_user_free(d);
+    return (int)rc;
+}
+
+static int RpcScanFile(const std::wstring& path, bool& detected, std::wstring& threat)
+{
+    if (!BindRpc()) return RBPO_ERR_NETWORK;
+    long rc = RBPO_ERR_GENERIC; long det = 0; wchar_t* t = nullptr;
+    RpcTryExcept { rc = RBPO_ScanFile(path.c_str(), &det, &t); }
+    RpcExcept(1)  { return RBPO_ERR_NETWORK; } RpcEndExcept
+    detected = (det != 0);
+    threat   = t ? t : L"";
+    if (t) midl_user_free(t);
+    return (int)rc;
+}
+
+static int RpcScanDirectory(const std::wstring& path, std::wstring& results)
+{
+    if (!BindRpc()) return RBPO_ERR_NETWORK;
+    long rc = RBPO_ERR_GENERIC; wchar_t* r = nullptr;
+    RpcTryExcept { rc = RBPO_ScanDirectory(path.c_str(), &r); }
+    RpcExcept(1)  { return RBPO_ERR_NETWORK; } RpcEndExcept
+    results = r ? r : L"";
+    if (r) midl_user_free(r);
+    return (int)rc;
+}
+
 // ---------------------------------------------------------------------------
 // UI construction helpers
 // ---------------------------------------------------------------------------
@@ -441,6 +481,7 @@ static void DestroyAllPanes()
     }
     h_loginEmail = h_loginPass = h_loginBtn = h_loginStatus = nullptr;
     h_userLbl = h_licLbl = h_actKey = h_actBtn = h_actStatus = h_avBtn = h_logoutBtn = nullptr;
+    h_avDbLbl = h_scanFileBtn = h_scanDirBtn = nullptr;
     g_currentPane = PANE_NONE;
 }
 
@@ -525,15 +566,37 @@ static void BuildMainPane(HWND hWnd, bool licensed,
 
         SetFocus(h_actKey);
     } else {
-        h_avBtn = CreateWindowExW(0, L"BUTTON", L"Запустить проверку (AV)",
+        h_avBtn = CreateWindowExW(0, L"BUTTON", L"Проверить AV модуль",
             WS_CHILD | WS_VISIBLE,
-            20, 94, 240, 32, hWnd, (HMENU)IDC_AV_BUTTON, g_hInstance, nullptr);
+            20, 94, 200, 30, hWnd, (HMENU)IDC_AV_BUTTON, g_hInstance, nullptr);
         SetCtrlFont(h_avBtn);
+
+        h_avDbLbl = CreateWindowExW(0, L"STATIC", L"База: загрузка...",
+            WS_CHILD | WS_VISIBLE | SS_LEFT,
+            20, 140, 520, 20, hWnd, (HMENU)IDC_AV_DB_LABEL, g_hInstance, nullptr);
+        SetCtrlFont(h_avDbLbl);
+
+        h_scanFileBtn = CreateWindowExW(0, L"BUTTON", L"Сканировать файл",
+            WS_CHILD | WS_VISIBLE,
+            20, 170, 180, 30, hWnd, (HMENU)IDC_SCAN_FILE_BTN, g_hInstance, nullptr);
+        SetCtrlFont(h_scanFileBtn);
+
+        h_scanDirBtn = CreateWindowExW(0, L"BUTTON", L"Сканировать папку",
+            WS_CHILD | WS_VISIBLE,
+            210, 170, 180, 30, hWnd, (HMENU)IDC_SCAN_DIR_BTN, g_hInstance, nullptr);
+        SetCtrlFont(h_scanDirBtn);
+
+        std::wstring dbDate; long dbCount = 0;
+        if (RpcGetAvDbInfo(dbDate, dbCount) == RBPO_OK) {
+            std::wstring dbInfo = L"Антивирусная база: " + dbDate +
+                                  L"  |  Записей: " + std::to_wstring(dbCount);
+            SetWindowTextW(h_avDbLbl, dbInfo.c_str());
+        }
     }
 
     h_logoutBtn = CreateWindowExW(0, L"BUTTON", L"Выйти из аккаунта",
         WS_CHILD | WS_VISIBLE,
-        20, 300, 170, 28, hWnd, (HMENU)IDC_LOGOUT_BUTTON, g_hInstance, nullptr);
+        20, 360, 170, 28, hWnd, (HMENU)IDC_LOGOUT_BUTTON, g_hInstance, nullptr);
     SetCtrlFont(h_logoutBtn);
 }
 
@@ -663,6 +726,91 @@ static void DoActivate()
     RefreshUI();
 }
 
+static void DoScanFile()
+{
+    wchar_t filePath[MAX_PATH] = {};
+    OPENFILENAMEW ofn = {};
+    ofn.lStructSize = sizeof(ofn);
+    ofn.hwndOwner   = g_hWnd;
+    ofn.lpstrFile   = filePath;
+    ofn.nMaxFile    = MAX_PATH;
+    ofn.lpstrTitle  = L"Выберите файл для сканирования";
+    ofn.Flags       = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST;
+
+    if (!GetOpenFileNameW(&ofn)) return;
+
+    bool detected = false;
+    std::wstring threat;
+    int rc = RpcScanFile(filePath, detected, threat);
+
+    if (rc == RBPO_ERR_NO_LICENSE) {
+        MessageBoxW(g_hWnd, L"Требуется активная лицензия",
+                    L"Сканирование", MB_OK | MB_ICONWARNING);
+        return;
+    }
+    if (rc != RBPO_OK) {
+        MessageBoxW(g_hWnd, L"Ошибка связи со службой",
+                    L"Сканирование", MB_OK | MB_ICONERROR);
+        return;
+    }
+
+    if (detected) {
+        std::wstring msg = L"Обнаружена угроза!\n\nФайл: ";
+        msg += filePath;
+        msg += L"\nУгроза: ";
+        msg += threat;
+        MessageBoxW(g_hWnd, msg.c_str(), L"Обнаружена угроза", MB_OK | MB_ICONWARNING);
+    } else {
+        std::wstring msg = L"Файл чист.\n\n";
+        msg += filePath;
+        MessageBoxW(g_hWnd, msg.c_str(), L"Сканирование завершено", MB_OK | MB_ICONINFORMATION);
+    }
+}
+
+static void DoScanDirectory()
+{
+    // Use SHBrowseForFolder to pick a directory
+    wchar_t dirPath[MAX_PATH] = {};
+
+    BROWSEINFOW bi = {};
+    bi.hwndOwner = g_hWnd;
+    bi.lpszTitle = L"Выберите папку для сканирования";
+    bi.ulFlags   = BIF_RETURNONLYFSDIRS | BIF_NEWDIALOGSTYLE;
+
+    PIDLIST_ABSOLUTE pidl = SHBrowseForFolderW(&bi);
+    if (!pidl) return;
+    SHGetPathFromIDListW(pidl, dirPath);
+    CoTaskMemFree(pidl);
+
+    if (!dirPath[0]) return;
+
+    std::wstring results;
+    int rc = RpcScanDirectory(dirPath, results);
+
+    if (rc == RBPO_ERR_NO_LICENSE) {
+        MessageBoxW(g_hWnd, L"Требуется активная лицензия",
+                    L"Сканирование", MB_OK | MB_ICONWARNING);
+        return;
+    }
+    if (rc != RBPO_OK) {
+        MessageBoxW(g_hWnd, L"Ошибка связи со службой",
+                    L"Сканирование", MB_OK | MB_ICONERROR);
+        return;
+    }
+
+    std::wstring title = (results == L"No threats detected")
+        ? L"Угрозы не обнаружены"
+        : L"Обнаружены угрозы";
+    UINT icon = (results == L"No threats detected")
+        ? MB_ICONINFORMATION : MB_ICONWARNING;
+
+    std::wstring msg = L"Папка: ";
+    msg += dirPath;
+    msg += L"\n\nРезультаты:\n";
+    msg += results;
+    MessageBoxW(g_hWnd, msg.c_str(), title.c_str(), MB_OK | icon);
+}
+
 // ---------------------------------------------------------------------------
 // Window procedure
 // ---------------------------------------------------------------------------
@@ -716,6 +864,12 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
             MessageBoxW(hWnd, full.c_str(), L"AV", MB_OK | MB_ICONINFORMATION);
             break;
         }
+        case IDC_SCAN_FILE_BTN:
+            DoScanFile();
+            break;
+        case IDC_SCAN_DIR_BTN:
+            DoScanDirectory();
+            break;
         }
         return 0;
 

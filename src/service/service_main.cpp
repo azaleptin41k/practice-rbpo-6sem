@@ -23,6 +23,7 @@
 #include "rbpo_rpc_constants.h"
 #include "state.h"
 #include "json_util.h"
+#include "av_engine.h"
 
 #pragma comment(lib, "wtsapi32.lib")
 #pragma comment(lib, "userenv.lib")
@@ -164,6 +165,45 @@ long RBPO_AVPing(wchar_t** message)
         return RBPO_ERR_NO_LICENSE;
     }
     *message = RpcDupW(L"AV module ready");
+    return RBPO_OK;
+}
+
+long RBPO_GetAvDbInfo(wchar_t** releaseDate, long* recordCount)
+{
+    rbpo::AvDbInfo info = rbpo::AvGetInfo();
+    *releaseDate  = RpcDupW(info.date);
+    *recordCount  = (long)info.count;
+    return RBPO_OK;
+}
+
+long RBPO_ScanFile(const wchar_t* filePath, long* detected, wchar_t** threatName)
+{
+    int gate = rbpo::LicenseGate();
+    if (gate != RBPO_OK) {
+        *detected   = 0;
+        *threatName = RpcDupW(L"No active license");
+        return RBPO_ERR_NO_LICENSE;
+    }
+    std::wstring threat;
+    bool found = rbpo::AvScanFile(filePath ? filePath : L"", threat);
+    *detected   = found ? 1 : 0;
+    *threatName = RpcDupW(threat);
+    RBPOLog("ScanFile '%ls': detected=%d threat=%ls",
+            filePath, *detected, threat.c_str());
+    return RBPO_OK;
+}
+
+long RBPO_ScanDirectory(const wchar_t* dirPath, wchar_t** results)
+{
+    int gate = rbpo::LicenseGate();
+    if (gate != RBPO_OK) {
+        *results = RpcDupW(L"No active license");
+        return RBPO_ERR_NO_LICENSE;
+    }
+    std::wstring res = rbpo::AvScanDirectory(dirPath ? dirPath : L"");
+    if (res.empty()) res = L"No threats detected";
+    *results = RpcDupW(res);
+    RBPOLog("ScanDirectory '%ls': result len=%zu", dirPath, res.size());
     return RBPO_OK;
 }
 
@@ -335,6 +375,8 @@ static void WINAPI ServiceMain(DWORD, LPWSTR*)
     g_ServiceStatus.dwCurrentState = SERVICE_RUNNING;
     SetServiceStatus(g_hServiceStatus, &g_ServiceStatus);
     RBPOLog("Service RUNNING (before session launches)");
+
+    rbpo::AvLoad();
 
     // --- Requirement 1: launch app in all existing active sessions -----------
     WTS_SESSION_INFOW* pSessions = nullptr;

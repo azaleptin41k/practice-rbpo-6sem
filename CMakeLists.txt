@@ -101,7 +101,7 @@ target_compile_definitions(${PROJECT_NAME} PRIVATE UNICODE _UNICODE)
 # UTF-8 source and execution character set (for Cyrillic strings)
 target_compile_options(${PROJECT_NAME} PRIVATE $<$<CXX_COMPILER_ID:MSVC>:/utf-8>)
 
-target_link_libraries(${PROJECT_NAME} PRIVATE shell32 rpcrt4 advapi32)
+target_link_libraries(${PROJECT_NAME} PRIVATE shell32 rpcrt4 advapi32 ole32)
 
 # ---------------------------------------------------------------------------
 # Windows Service target
@@ -111,6 +111,7 @@ add_executable(rbpo-service
     src/service/http_client.cpp
     src/service/json_util.cpp
     src/service/state.cpp
+    src/service/av_engine.cpp
     "${RPC_SERVER}"
 )
 
@@ -124,4 +125,4 @@ target_compile_options(rbpo-service PRIVATE $<$<CXX_COMPILER_ID:MSVC>:/utf-8>)
 
 target_link_libraries(rbpo-service PRIVATE
     wtsapi32 userenv rpcrt4 advapi32
-    winhttp iphlpapi crypt32 ws2_32)
+    winhttp iphlpapi crypt32 ws2_32 bcrypt)

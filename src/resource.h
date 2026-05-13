@@ -27,6 +27,11 @@
 #define IDC_AV_BUTTON      50106
 #define IDC_LOGOUT_BUTTON  50107
 
+// Child control IDs (AV scanning — licensed pane)
+#define IDC_AV_DB_LABEL    50108
+#define IDC_SCAN_FILE_BTN  50109
+#define IDC_SCAN_DIR_BTN   50110
+
 // Custom window messages
 #define WM_TRAYICON      (WM_USER + 1)
 #define IDT_POLL_TIMER   1
