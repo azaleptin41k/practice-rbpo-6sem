@@ -12,8 +12,10 @@
 #include <cstring>
 #include <ctime>
 #include "av_engine.h"
+#include "av_db_io.h"
 #include "http_client.h"
 #include "json_util.h"
+#include "state.h"
 
 #pragma comment(lib, "bcrypt.lib")
 
@@ -140,40 +142,119 @@ static void AcBuild()
     }
 }
 
+static void InstallRecords(const std::vector<AvRecord>& records,
+                           const std::wstring& date)
+{
+    std::lock_guard<std::mutex> lk(g_dbMtx);
+    g_db.clear();
+    g_allRecords.clear();
+    for (const auto& r : records) {
+        g_db[r.prefix].push_back(r);
+        g_allRecords.push_back(r);
+    }
+    g_dbDate  = date;
+    g_dbCount = (uint32_t)g_allRecords.size();
+    AcBuild();
+    RBPOLog("InstallRecords: %u records installed, AC states=%zu",
+            g_dbCount, g_ac.size());
+}
+
+static bool IsNetworkAvailable()
+{
+    std::wstring host; int port;
+    GetBackend(host, port);
+    auto resp = HttpsRequest(host, port, L"GET", L"/api/health", "", "");
+    return !resp.transportError;
+}
+
 static std::thread        g_schedThread;
 static HANDLE             g_schedWake     = nullptr;
 static std::atomic<bool>  g_schedStop{false};
 static void SchedulerWorker();
 
+void AvLoadFromBackend(const std::string& accessToken);
+static void AvFetchByIds(const std::string& token, const std::vector<std::string>& ids);
+
 void AvLoad()
 {
-    std::lock_guard<std::mutex> lk(g_dbMtx);
-    g_db.clear();
-    g_allRecords.clear();
+    std::wstring dir     = AvDbGetDir();
+    std::wstring dbPath  = dir + L"avdb.bin";
+    std::wstring mftPath = dir + L"avdb.manifest";
+    std::wstring bakDb   = dir + L"avdb.bin.bak";
+    std::wstring bakMft  = dir + L"avdb.manifest.bak";
+    std::wstring defDb   = dir + L"avdb.default.bin";
+    std::wstring defMft  = dir + L"avdb.default.manifest";
 
-    std::vector<uint8_t> sig1 = {
-        'R','B','P','O','T','E','S','T',
-        'V','R','S','1','.','0','0','0'
-    };
-    std::vector<uint8_t> sig2 = {
-        '#','R','B','P','O','T','E','S',
-        'T','V','R','S','2','.','0','0'
-    };
+    AvDbEnsureDefault(defDb, defMft);
 
-    AvRecord rec1 = MakeRecord(sig1, -1, -1, AvObjectType::PE);
-    AvRecord rec2 = MakeRecord(sig2, -1, -1, AvObjectType::Script);
+    bool loaded = false;
 
-    g_db[rec1.prefix].push_back(rec1);
-    g_db[rec2.prefix].push_back(rec2);
-    g_allRecords.push_back(rec1);
-    g_allRecords.push_back(rec2);
+    if (AvManifestVerify(dbPath, mftPath)) {
+        std::vector<AvRecord> records;
+        std::wstring date;
+        size_t skipped = 0;
+        std::vector<std::string> skippedIds;
+        if (AvDbLoadFromFile(dbPath, records, date, &skipped, &skippedIds) && !records.empty()) {
+            RBPOLog("AvLoad: main DB OK (%zu records, %zu skipped)", records.size(), skipped);
+            InstallRecords(records, date);
+            loaded = true;
+            if (!skippedIds.empty()) {
+                std::string token = StateGetAccessToken();
+                if (!token.empty() && IsNetworkAvailable()) {
+                    RBPOLog("AvLoad: re-fetching %zu records by id", skippedIds.size());
+                    AvFetchByIds(token, skippedIds);
+                }
+            } else if (skipped > 0) {
+                std::string token = StateGetAccessToken();
+                if (!token.empty() && IsNetworkAvailable()) {
+                    RBPOLog("AvLoad: %zu bad-sig records without ids — full re-fetch", skipped);
+                    AvLoadFromBackend(token);
+                }
+            }
+        }
+    } else {
+        RBPOLog("AvLoad: main manifest invalid");
+        std::string token = StateGetAccessToken();
+        if (!token.empty() && IsNetworkAvailable()) {
+            RBPOLog("AvLoad: network available — forcing DB update");
+            AvLoadFromBackend(token);
+            loaded = !g_allRecords.empty();
+        }
+    }
 
-    g_dbDate  = L"2026-05-13";
-    g_dbCount = (uint32_t)g_allRecords.size();
+    if (!loaded) {
+        if (AvManifestVerify(bakDb, bakMft)) {
+            std::vector<AvRecord> records;
+            std::wstring date;
+            if (AvDbLoadFromFile(bakDb, records, date) && !records.empty()) {
+                RBPOLog("AvLoad: restored from backup (%zu records)", records.size());
+                CopyFileW(bakDb.c_str(),  dbPath.c_str(),  FALSE);
+                CopyFileW(bakMft.c_str(), mftPath.c_str(), FALSE);
+                InstallRecords(records, date);
+                loaded = true;
+            }
+        }
+    }
 
-    AcBuild();
+    if (!loaded) {
+        RBPOLog("AvLoad: loading default DB");
+        std::vector<AvRecord> records;
+        std::wstring date;
+        if (AvDbLoadFromFile(defDb, records, date)) {
+            InstallRecords(records, date);
+        } else {
+            RBPOLog("AvLoad: default DB unreadable — using hardcoded fallback");
+            AvRecord rec1 = MakeRecord(
+                {'R','B','P','O','T','E','S','T','V','R','S','1','.','0','0','0'},
+                -1, -1, AvObjectType::PE);
+            AvRecord rec2 = MakeRecord(
+                {'#','R','B','P','O','T','E','S','T','V','R','S','2','.','0','0'},
+                -1, -1, AvObjectType::Script);
+            InstallRecords({rec1, rec2}, L"2026-05-13");
+        }
+    }
 
-    RBPOLog("AvLoad: loaded %u records, AC states=%zu", g_dbCount, g_ac.size());
+    RBPOLog("AvLoad: %u records active, AC states=%zu", g_dbCount, g_ac.size());
 
     if (!g_schedThread.joinable()) {
         g_schedStop = false;
@@ -223,6 +304,125 @@ static std::vector<std::string> SplitJsonObjects(const std::string& json)
     return objs;
 }
 
+static AvRecord ParseSignatureObject(const std::string& obj)
+{
+    AvRecord r;
+    std::string firstHex = JsonExtractString(obj, "firstBytesHex");
+    std::string remHex   = JsonExtractString(obj, "remainderHashHex");
+    std::string fileType = JsonExtractString(obj, "fileType");
+    std::string threat   = JsonExtractString(obj, "threatName");
+    std::string sigB64   = JsonExtractString(obj, "digitalSignatureBase64");
+    long long   remLen   = JsonExtractNumber(obj, "remainderLength");
+    long long   offStart = JsonExtractNumber(obj, "offsetStart");
+    long long   offEnd   = JsonExtractNumber(obj, "offsetEnd");
+
+    std::vector<uint8_t> firstBytes = HexDecode(firstHex);
+    r.prefix = 0;
+    for (int i = 0; i < 8 && i < (int)firstBytes.size(); i++)
+        r.prefix |= ((uint64_t)firstBytes[i] << (i * 8));
+    r.id               = JsonExtractString(obj, "id");
+    r.sigLen           = (uint32_t)(firstBytes.size() + (size_t)remLen);
+    r.sigBytes         = firstBytes;
+    r.sigHash          = remHex.empty() ? std::vector<uint8_t>{} : HexDecode(remHex);
+    r.hasRemainderHash = (remLen > 0 && !remHex.empty());
+    r.offsetBegin      = offStart;
+    r.offsetEnd        = offEnd;
+    r.type             = (fileType == "PE") ? AvObjectType::PE : AvObjectType::Script;
+    r.threatName       = Utf8ToWide(threat);
+    r.rsaSig           = AvBase64Decode(sigB64);
+
+    if (!r.rsaSig.empty() && !AvRsaVerifyRecord(r, r.rsaSig)) {
+        RBPOLog("ParseSignatureObject: RSA sig invalid for id=%s threat=%s",
+                r.id.c_str(), threat.c_str());
+        r.rsaSig.clear();
+        r.id.clear();
+    }
+    return r;
+}
+
+static void SaveCurrentDb()
+{
+    std::wstring dir     = AvDbGetDir();
+    std::wstring dbPath  = dir + L"avdb.bin";
+    std::wstring mftPath = dir + L"avdb.manifest";
+    std::wstring bakDb   = dir + L"avdb.bin.bak";
+    std::wstring bakMft  = dir + L"avdb.manifest.bak";
+
+    std::vector<AvRecord> records;
+    std::wstring date;
+    {
+        std::lock_guard<std::mutex> lk(g_dbMtx);
+        records = g_allRecords;
+        date    = g_dbDate;
+    }
+
+    if (!records.empty())
+        AvDbSaveToFile(bakDb, bakMft, records, date);
+
+    if (!AvDbSaveToFile(dbPath, mftPath, records, date)) {
+        RBPOLog("SaveCurrentDb: write failed — rollback from backup");
+        std::vector<AvRecord> bak; std::wstring bakDate;
+        if (AvDbLoadFromFile(bakDb, bak, bakDate) && !bak.empty())
+            InstallRecords(bak, bakDate);
+    }
+}
+
+static void AvFetchByIds(const std::string& token,
+                          const std::vector<std::string>& ids)
+{
+    std::string body = "{\"ids\":[";
+    for (size_t i = 0; i < ids.size(); i++) {
+        if (i > 0) body += ",";
+        body += "\"" + ids[i] + "\"";
+    }
+    body += "]}";
+
+    std::wstring host; int port;
+    GetBackend(host, port);
+    auto resp = HttpsRequest(host, port, L"POST", L"/api/signatures/by-ids", body, token);
+    if (resp.transportError || resp.status / 100 != 2) {
+        RBPOLog("AvFetchByIds: HTTP %d", resp.status);
+        return;
+    }
+
+    auto objs = SplitJsonObjects(resp.body);
+    if (objs.empty()) return;
+
+    std::vector<AvRecord> merged;
+    std::wstring curDate;
+    {
+        std::lock_guard<std::mutex> lk(g_dbMtx);
+        merged  = g_allRecords;
+        curDate = g_dbDate;
+    }
+
+    for (const auto& obj : objs) {
+        if (JsonExtractString(obj, "status") != "ACTUAL") continue;
+        std::string firstHex = JsonExtractString(obj, "firstBytesHex");
+        if (firstHex.size() < 16) continue;
+        AvRecord r = ParseSignatureObject(obj);
+        if (r.sigBytes.size() < 8) continue;
+
+        bool replaced = false;
+        for (auto& existing : merged) {
+            if (!existing.id.empty() && existing.id == r.id) {
+                existing = std::move(r);
+                replaced = true;
+                break;
+            }
+        }
+        if (!replaced) merged.push_back(std::move(r));
+    }
+
+    SYSTEMTIME st; GetSystemTime(&st);
+    wchar_t dateBuf[32];
+    swprintf_s(dateBuf, L"%04d-%02d-%02d", st.wYear, st.wMonth, st.wDay);
+
+    InstallRecords(merged, std::wstring(dateBuf));
+    SaveCurrentDb();
+    RBPOLog("AvFetchByIds: merged %zu ids, total=%u", ids.size(), g_dbCount);
+}
+
 void AvLoadFromBackend(const std::string& accessToken)
 {
     std::wstring host; int port;
@@ -237,52 +437,26 @@ void AvLoadFromBackend(const std::string& accessToken)
     std::vector<AvRecord> newRecords;
     for (const auto& obj : objs) {
         if (JsonExtractString(obj, "status") != "ACTUAL") continue;
-        std::string firstHex  = JsonExtractString(obj, "firstBytesHex");
-        std::string remHex    = JsonExtractString(obj, "remainderHashHex");
-        std::string fileType  = JsonExtractString(obj, "fileType");
-        std::string threat    = JsonExtractString(obj, "threatName");
-        long long   remLen    = JsonExtractNumber(obj, "remainderLength");
-        long long   offStart  = JsonExtractNumber(obj, "offsetStart");
-        long long   offEnd    = JsonExtractNumber(obj, "offsetEnd");
-        if (firstHex.empty()) continue;
+        std::string firstHex = JsonExtractString(obj, "firstBytesHex");
+        if (firstHex.size() < 16) continue;
 
-        std::vector<uint8_t> firstBytes = HexDecode(firstHex);
-        if (firstBytes.size() < 8) continue;
-
-        AvRecord r;
-        r.prefix = 0;
-        for (int i = 0; i < 8; i++)
-            r.prefix |= ((uint64_t)firstBytes[i] << (i * 8));
-        r.sigLen            = (uint32_t)(firstBytes.size() + (size_t)remLen);
-        r.sigBytes          = firstBytes;
-        r.sigHash           = remHex.empty() ? std::vector<uint8_t>{} : HexDecode(remHex);
-        r.hasRemainderHash  = (remLen > 0 && !remHex.empty());
-        r.offsetBegin       = offStart;
-        r.offsetEnd         = offEnd;
-        r.type              = (fileType == "PE") ? AvObjectType::PE : AvObjectType::Script;
-        r.threatName        = Utf8ToWide(threat);
+        AvRecord r = ParseSignatureObject(obj);
+        if (r.sigBytes.size() < 8) continue;
         newRecords.push_back(std::move(r));
     }
 
     if (newRecords.empty()) {
-        RBPOLog("AvLoadFromBackend: no ACTUAL records");
+        RBPOLog("AvLoadFromBackend: no ACTUAL records from backend");
         return;
     }
 
-    std::lock_guard<std::mutex> lk(g_dbMtx);
-    g_db.clear();
-    g_allRecords.clear();
-    for (auto& r : newRecords) {
-        g_db[r.prefix].push_back(r);
-        g_allRecords.push_back(std::move(r));
-    }
     SYSTEMTIME st; GetSystemTime(&st);
     wchar_t dateBuf[32];
     swprintf_s(dateBuf, L"%04d-%02d-%02d", st.wYear, st.wMonth, st.wDay);
-    g_dbDate  = dateBuf;
-    g_dbCount = (uint32_t)g_allRecords.size();
-    AcBuild();
-    RBPOLog("AvLoadFromBackend: loaded %u records", g_dbCount);
+
+    InstallRecords(newRecords, std::wstring(dateBuf));
+    SaveCurrentDb();
+    RBPOLog("AvLoadFromBackend: %u records saved to disk", g_dbCount);
 }
 
 // --- Scanning via Aho-Corasick ---
@@ -587,8 +761,55 @@ std::wstring AvGetMonitorResults()
     return g_monResults.empty() ? L"No threats detected" : g_monResults;
 }
 
+static std::thread        g_updateThread;
+static HANDLE             g_updateWake     = nullptr;
+static std::atomic<bool>  g_updateStop{false};
+static long               g_updateInterval = 0;
+
+static void UpdateWorker()
+{
+    int64_t lastUpdate = 0;
+    while (!g_updateStop) {
+        WaitForSingleObject(g_updateWake, 10000);
+        if (g_updateStop) break;
+        if (g_updateInterval <= 0) continue;
+
+        int64_t now = (int64_t)time(nullptr);
+        if (now - lastUpdate < g_updateInterval) continue;
+        lastUpdate = now;
+
+        std::string token = StateGetAccessToken();
+        if (token.empty()) continue;
+
+        RBPOLog("UpdateWorker: starting periodic DB update");
+        AvLoadFromBackend(token);
+    }
+}
+
+void AvDbStartUpdate(long intervalSeconds)
+{
+    g_updateInterval = intervalSeconds;
+    if (!g_updateThread.joinable()) {
+        g_updateStop = false;
+        g_updateWake = CreateEventW(nullptr, FALSE, FALSE, nullptr);
+        g_updateThread = std::thread(UpdateWorker);
+    }
+    RBPOLog("AvDbStartUpdate: interval=%ld s", intervalSeconds);
+}
+
+void AvDbStopUpdate()
+{
+    g_updateStop = true;
+    if (g_updateWake) SetEvent(g_updateWake);
+    if (g_updateThread.joinable()) g_updateThread.join();
+    if (g_updateWake) { CloseHandle(g_updateWake); g_updateWake = nullptr; }
+    RBPOLog("AvDbStopUpdate: done");
+}
+
 void AvShutdown()
 {
+    AvDbStopUpdate();
+
     g_schedStop = true;
     if (g_schedWake) SetEvent(g_schedWake);
     if (g_schedThread.joinable()) g_schedThread.join();

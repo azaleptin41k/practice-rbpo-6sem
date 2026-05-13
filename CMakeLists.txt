@@ -112,6 +112,7 @@ add_executable(rbpo-service
     src/service/json_util.cpp
     src/service/state.cpp
     src/service/av_engine.cpp
+    src/service/av_db_io.cpp
     "${RPC_SERVER}"
 )
 
