@@ -2,7 +2,7 @@ name: Build
 
 on:
   push:
-    branches: [ main, master, zad-1, zad-2, zad-3, zad-4, zad-5 ]
+    branches: [ main, master, zad-1, zad-2, zad-3, zad-4, zad-5, zad-6 ]
   pull_request:
     branches: [ main, master ]
 
@@ -25,10 +25,50 @@ jobs:
       - name: Build
         run: cmake --build build --config ${{ matrix.build_type }}
 
-      - name: Upload artifact
+      - name: Install WiX Toolset v3
+        if: matrix.arch == 'x64'
+        run: choco install wixtoolset --version=3.11.2
+
+      - name: Find VC++ Redist Merge Module
+        if: matrix.arch == 'x64'
+        shell: pwsh
+        run: |
+          $msm = Get-ChildItem "C:\Program Files (x86)\Common Files\Merge Modules" -Filter "Microsoft_VC143_CRT_x64.msm" -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $msm) {
+            $msm = Get-ChildItem "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Redist\MSVC" -Filter "Microsoft_VC143_CRT_x64.msm" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+          }
+          if (-not $msm) {
+            $msm = Get-ChildItem "C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Redist\MSVC" -Filter "Microsoft_VC143_CRT_x64.msm" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+          }
+          if (-not $msm) {
+            Write-Error "VC++ Redist merge module not found"
+            exit 1
+          }
+          Write-Host "Found MSM: $($msm.FullName)"
+          echo "MSM_PATH=$($msm.FullName)" >> $env:GITHUB_ENV
+
+      - name: Build Installer (MSI)
+        if: matrix.arch == 'x64'
+        shell: pwsh
+        run: |
+          $candle = "C:\Program Files (x86)\WiX Toolset v3.11\bin\candle.exe"
+          $light  = "C:\Program Files (x86)\WiX Toolset v3.11\bin\light.exe"
+          & $candle -arch x64 -dSourceDir="build\${{ matrix.build_type }}" -dVCRedistPath="$env:MSM_PATH" -o "installer\Product.wixobj" "installer\Product.wxs"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & $light -ext WixUIExtension -o "build\${{ matrix.build_type }}\RBPO-Setup.msi" "installer\Product.wixobj"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Upload binaries artifact
         uses: actions/upload-artifact@v4
         with:
           name: rbpo-app-${{ matrix.build_type }}-${{ matrix.arch }}
           path: |
             build/${{ matrix.build_type }}/rbpo-app.exe
             build/${{ matrix.build_type }}/rbpo-service.exe
+
+      - name: Upload installer artifact
+        if: matrix.arch == 'x64'
+        uses: actions/upload-artifact@v4
+        with:
+          name: rbpo-setup-${{ matrix.build_type }}-${{ matrix.arch }}
+          path: build/${{ matrix.build_type }}/RBPO-Setup.msi

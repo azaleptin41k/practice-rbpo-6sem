@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+  <?define ProductName = "RBPO Antivirus" ?>
+  <?define Manufacturer = "RBPO" ?>
+  <?define Version = "1.0.0.0" ?>
+
+  <Product Id="*" Name="$(var.ProductName)" Language="1049" Version="$(var.Version)" Manufacturer="$(var.Manufacturer)" UpgradeCode="B5A1C8F2-3E4D-4A5B-9C7D-8E0F1A2B3C4D">
+    <Package InstallerVersion="200" Compressed="yes" InstallScope="perMachine" Platform="x64" />
+    <MajorUpgrade DowngradeErrorMessage="A newer version is already installed." />
+    <MediaTemplate />
+
+    <Directory Id="TARGETDIR" Name="SourceDir">
+      <Directory Id="ProgramFiles64Folder">
+        <Directory Id="INSTALLFOLDER" Name="RBPO" />
+      </Directory>
+    </Directory>
+
+    <Property Id="WIXUI_INSTALLDIR" Value="INSTALLFOLDER" />
+    <UIRef Id="WixUI_Minimal" />
+    <WixVariable Id="WixUILicenseRtf" Value="installer\license.rtf" />
+
+    <ComponentGroup Id="ProductComponents" Directory="INSTALLFOLDER">
+      <Component Id="RBPOAppExe" Guid="*">
+        <File Id="RBPOAppExeFile" Name="rbpo-app.exe" Source="$(var.SourceDir)\rbpo-app.exe" KeyPath="yes" />
+      </Component>
+      <Component Id="RBPOServiceExe" Guid="*">
+        <File Id="RBPOServiceExeFile" Name="rbpo-service.exe" Source="$(var.SourceDir)\rbpo-service.exe" KeyPath="yes" />
+        <ServiceInstall Id="RBPOServiceInstall" Name="RBPOService" DisplayName="RBPO Service"
+                        Type="ownProcess" Start="auto" ErrorControl="normal"
+                        Account="NT AUTHORITY\SYSTEM" />
+        <ServiceControl Id="RBPOServiceControl" Name="RBPOService"
+                        Start="install" Stop="both" Remove="uninstall" Wait="yes" />
+      </Component>
+    </ComponentGroup>
+
+    <Feature Id="ProductFeature" Title="RBPO Antivirus" Level="1">
+      <ComponentGroupRef Id="ProductComponents" />
+      <MergeRef Id="VCRedist" />
+    </Feature>
+
+    <DirectoryRef Id="TARGETDIR">
+      <Merge Id="VCRedist" SourceFile="$(var.VCRedistPath)" DiskId="1" Language="0" />
+    </DirectoryRef>
+  </Product>
+</Wix>

@@ -233,8 +233,29 @@ sc stop RBPOService
 sc delete RBPOService
 ```
 
+### Установка через MSI
+
+Собранный инсталлятор `RBPO-Setup.msi` (ветка `zad-6`) выполняет установку «из коробки»:
+
+- Копирует `rbpo-app.exe` и `rbpo-service.exe` в `C:\Program Files\RBPO`.
+- Устанавливает VC++ 2022 CRT через Merge Module (автоматический учёт ссылок Windows Installer).
+- Регистрирует и запускает службу `RBPOService` с типом запуска **Automatic**.
+
+При удалении через «Установку и удаление программ»:
+
+- Останавливает и удаляет службу `RBPOService`.
+- Удаляет все файлы приложения.
+- Удаляет VC++ CRT, если он не используется другими продуктами (reference counting MSM).
+
+Локальная сборка MSI (требуется WiX Toolset v3.11):
+
+```powershell
+.\installer\build.ps1 -SourceDir "build\Release" `
+    -VCRedistPath "C:\Program Files (x86)\Common Files\Merge Modules\Microsoft_VC143_CRT_x64.msm"
+```
+
 ---
 
 ## CI
 
-Workflow `.github/workflows/build.yml` собирает оба exe на `windows-latest` и публикует артефакты.
+Workflow `.github/workflows/build.yml` собирает оба exe на `windows-latest`, а для `x64` дополнительно собирает `RBPO-Setup.msi` и публикует его в артефакты.
