@@ -27,7 +27,7 @@ jobs:
 
       - name: Install WiX Toolset v3
         if: matrix.arch == 'x64'
-        run: choco install wixtoolset --version=3.11.2
+        run: choco install wixtoolset
 
       - name: Find VC++ Redist Merge Module
         if: matrix.arch == 'x64'
@@ -51,8 +51,16 @@ jobs:
         if: matrix.arch == 'x64'
         shell: pwsh
         run: |
-          $candle = "C:\Program Files (x86)\WiX Toolset v3.11\bin\candle.exe"
-          $light  = "C:\Program Files (x86)\WiX Toolset v3.11\bin\light.exe"
+          $candle = (Get-ChildItem "C:\Program Files (x86)\WiX Toolset*\bin\candle.exe" -ErrorAction SilentlyContinue | Select-Object -First 1).FullName
+          if (-not $candle) {
+            $candle = (Get-ChildItem "C:\Program Files\WiX Toolset*\bin\candle.exe" -ErrorAction SilentlyContinue | Select-Object -First 1).FullName
+          }
+          if (-not $candle) { Write-Error "candle.exe not found"; exit 1 }
+          $light = (Get-ChildItem "C:\Program Files (x86)\WiX Toolset*\bin\light.exe" -ErrorAction SilentlyContinue | Select-Object -First 1).FullName
+          if (-not $light) {
+            $light = (Get-ChildItem "C:\Program Files\WiX Toolset*\bin\light.exe" -ErrorAction SilentlyContinue | Select-Object -First 1).FullName
+          }
+          if (-not $light) { Write-Error "light.exe not found"; exit 1 }
           & $candle -arch x64 -dSourceDir="build\${{ matrix.build_type }}" -dVCRedistPath="$env:MSM_PATH" -o "installer\Product.wixobj" "installer\Product.wxs"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           & $light -ext WixUIExtension -o "build\${{ matrix.build_type }}\RBPO-Setup.msi" "installer\Product.wixobj"
