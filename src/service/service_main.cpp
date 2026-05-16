@@ -407,7 +407,7 @@ static void WINAPI ServiceMain(DWORD, LPWSTR*)
     rpcStatus = RpcServerUseProtseqEpW(
         reinterpret_cast<RPC_WSTR>(const_cast<wchar_t*>(L"ncacn_np")),
         RPC_C_PROTSEQ_MAX_REQS_DEFAULT,
-        reinterpret_cast<RPC_WSTR>(const_cast<wchar_t*>(L"\\\\pipe\\\\RBPOService")),
+        reinterpret_cast<RPC_WSTR>(const_cast<wchar_t*>(L"RBPOService")),
         nullptr);
 
     RBPOLog("RpcServerUseProtseqEpW returned %d", rpcStatus);
