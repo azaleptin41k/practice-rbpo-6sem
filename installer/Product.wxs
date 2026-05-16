@@ -19,6 +19,14 @@
     <UIRef Id="WixUI_Minimal" />
     <WixVariable Id="WixUILicenseRtf" Value="installer\license.rtf" />
 
+    <!-- Launch GUI after MSI install completes -->
+    <Property Id="WixShellExecTarget" Value="[#RBPOAppExeFile]" />
+    <CustomAction Id="LaunchApp" BinaryKey="WixCA" DllEntry="WixShellExec" Impersonate="yes" Execute="commit" Return="asyncNoWait" />
+
+    <InstallExecuteSequence>
+      <Custom Action="LaunchApp" After="InstallFinalize">NOT Installed</Custom>
+    </InstallExecuteSequence>
+
     <ComponentGroup Id="ProductComponents" Directory="INSTALLFOLDER">
       <Component Id="RBPOAppExe" Guid="39D16D67-9969-4793-A887-FCE2BC8E8FAC">
         <File Id="RBPOAppExeFile" Name="rbpo-app.exe" Source="$(var.SourceDir)\rbpo-app.exe" KeyPath="yes" />
@@ -29,7 +37,7 @@
                         Type="ownProcess" Start="auto" ErrorControl="normal"
                         Account="NT AUTHORITY\SYSTEM" />
         <ServiceControl Id="RBPOServiceControl" Name="RBPOService"
-                        Start="install" Stop="both" Remove="uninstall" Wait="yes" />
+                        Start="none" Stop="both" Remove="uninstall" Wait="yes" />
       </Component>
     </ComponentGroup>
 
