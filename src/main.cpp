@@ -249,9 +249,9 @@ static bool BindRpc()
     RPC_WSTR sb = nullptr;
     RPC_STATUS s = RpcStringBindingComposeW(
         nullptr,
-        reinterpret_cast<RPC_WSTR>(const_cast<wchar_t*>(L"ncalrpc")),
+        reinterpret_cast<RPC_WSTR>(const_cast<wchar_t*>(L"ncacn_np")),
         nullptr,
-        reinterpret_cast<RPC_WSTR>(const_cast<wchar_t*>(RBPO_RPC_ENDPOINT)),
+        reinterpret_cast<RPC_WSTR>(const_cast<wchar_t*>(L"\\\\pipe\\\\RBPOService")),
         nullptr, &sb);
     if (s != RPC_S_OK) return false;
     s = RpcBindingFromStringBindingW(sb, &hRBPOServiceBinding);
