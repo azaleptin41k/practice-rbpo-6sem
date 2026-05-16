@@ -285,11 +285,6 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR pCmdLine, int)
 
     if (!IsServiceRunning()) {
         StartServiceAndWait();
-        return 0;
-    }
-    if (!IsParentService()) {
-        Log("Parent is not the service, exiting");
-        return 0;
     }
 
     g_hMutex = CreateMutexW(nullptr, TRUE, APP_MUTEX_NAME);
