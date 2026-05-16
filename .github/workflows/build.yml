@@ -19,6 +19,15 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v3
+        with:
+          version: '6.7.3'
+          host: 'windows'
+          target: 'desktop'
+          arch: ${{ matrix.arch == 'x64' && 'win64_msvc2019_64' || 'win64_msvc2019_arm64' }}
+          cache: true
+
       - name: Configure CMake
         run: cmake -B build -G "Visual Studio 17 2022" -A ${{ matrix.arch }}
 
@@ -47,6 +56,22 @@ jobs:
           Write-Host "Found MSM: $($msm.FullName)"
           echo "MSM_PATH=$($msm.FullName)" >> $env:GITHUB_ENV
 
+      - name: Deploy Qt runtime
+        if: matrix.arch == 'x64'
+        shell: pwsh
+        run: |
+          $wdq = (Get-Command windeployqt.exe -ErrorAction SilentlyContinue).Source
+          if (-not $wdq) {
+            $wdq = (Get-ChildItem "$env:QT_ROOT_DIR\bin\windeployqt.exe" -ErrorAction SilentlyContinue | Select-Object -First 1).FullName
+          }
+          if (-not $wdq) { Write-Error "windeployqt.exe not found"; exit 1 }
+          Write-Host "windeployqt: $wdq"
+          New-Item -ItemType Directory -Path "build\qt_deploy" -Force | Out-Null
+          & $wdq --no-translations --no-system-d3d-compiler --no-opengl-sw `
+            --dir "build\qt_deploy" `
+            "build\${{ matrix.build_type }}\rbpo-app.exe"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
       - name: Build Installer (MSI)
         if: matrix.arch == 'x64'
         shell: pwsh
@@ -61,11 +86,37 @@ jobs:
             $light = (Get-ChildItem "C:\Program Files (x86)\WiX Toolset*\bin\light.exe" -ErrorAction SilentlyContinue | Select-Object -First 1).FullName
           }
           if (-not $light) { Write-Error "light.exe not found"; exit 1 }
+          $heat = (Get-Command "heat.exe" -ErrorAction SilentlyContinue).Source
+          if (-not $heat) {
+            $heat = (Get-ChildItem "C:\Program Files (x86)\WiX Toolset*\bin\heat.exe" -ErrorAction SilentlyContinue | Select-Object -First 1).FullName
+          }
+          if (-not $heat) { Write-Error "heat.exe not found"; exit 1 }
           Write-Host "candle: $candle"
           Write-Host "light:  $light"
-          & $candle -arch x64 -dSourceDir="build\${{ matrix.build_type }}" -dVCRedistPath="$env:MSM_PATH" -o "installer\Product.wixobj" "installer\Product.wxs"
+          Write-Host "heat:   $heat"
+
+          # Harvest Qt deployed files into a generated WXS
+          & $heat dir "build\qt_deploy" -gg -scom -sreg -sfrag -srd `
+            -cg QtDeployFiles -dr INSTALLFOLDER `
+            -var var.QtDeployDir `
+            -o "installer\QtFiles.wxs"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          & $light -ext WixUIExtension -o "build\${{ matrix.build_type }}\RBPO-Setup.msi" "installer\Product.wixobj"
+
+          # Compile
+          & $candle -arch x64 `
+            -dSourceDir="build\${{ matrix.build_type }}" `
+            -dVCRedistPath="$env:MSM_PATH" `
+            -o "installer\Product.wixobj" "installer\Product.wxs"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & $candle -arch x64 `
+            -dQtDeployDir="build\qt_deploy" `
+            -o "installer\QtFiles.wixobj" "installer\QtFiles.wxs"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+          # Link
+          & $light -ext WixUIExtension `
+            -o "build\${{ matrix.build_type }}\RBPO-Setup.msi" `
+            "installer\Product.wixobj" "installer\QtFiles.wixobj"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Upload binaries artifact

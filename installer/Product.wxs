@@ -43,6 +43,7 @@
 
     <Feature Id="ProductFeature" Title="RBPO Antivirus" Level="1">
       <ComponentGroupRef Id="ProductComponents" />
+      <ComponentGroupRef Id="QtDeployFiles" />
       <MergeRef Id="VCRedist" />
     </Feature>
 
