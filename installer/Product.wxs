@@ -29,13 +29,7 @@
                         Type="ownProcess" Start="auto" ErrorControl="normal"
                         Account="NT AUTHORITY\SYSTEM" />
         <ServiceControl Id="RBPOServiceControl" Name="RBPOService"
-                        Start="none" Stop="both" Remove="uninstall" Wait="yes" />
-      </Component>
-      <Component Id="AvDbDefault" Guid="B2E3F4A5-C6D7-8901-2345-678901234567">
-        <File Id="AvDbDefaultBin" Name="avdb.default.bin" Source="$(var.SourceDir)\avdb.default.bin" KeyPath="yes" />
-      </Component>
-      <Component Id="AvDbDefaultManifest" Guid="C3D4E5B6-A7F8-9012-3456-789012345678">
-        <File Id="AvDbDefaultManifestFile" Name="avdb.default.manifest" Source="$(var.SourceDir)\avdb.default.manifest" KeyPath="yes" />
+                        Start="install" Stop="both" Remove="uninstall" Wait="yes" />
       </Component>
     </ComponentGroup>
 
