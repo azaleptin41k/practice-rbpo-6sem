@@ -4,8 +4,8 @@
   <?define Manufacturer = "RBPO" ?>
   <?define Version = "1.0.0.0" ?>
 
-  <Product Id="*" Name="$(var.ProductName)" Language="1049" Version="$(var.Version)" Manufacturer="$(var.Manufacturer)" UpgradeCode="B5A1C8F2-3E4D-4A5B-9C7D-8E0F1A2B3C4D">
-    <Package InstallerVersion="200" Compressed="yes" InstallScope="perMachine" Platform="x64" />
+  <Product Id="A1B2C3D4-E5F6-7890-1234-567890ABCDEF" Name="$(var.ProductName)" Language="1049" Version="$(var.Version)" Manufacturer="$(var.Manufacturer)" UpgradeCode="B5A1C8F2-3E4D-4A5B-9C7D-8E0F1A2B3C4D">
+    <Package InstallerVersion="500" Compressed="yes" InstallScope="perMachine" Platform="x64" />
     <MajorUpgrade DowngradeErrorMessage="A newer version is already installed." />
     <Media Id="1" Cabinet="product.cab" EmbedCab="yes" />
 
@@ -20,10 +20,10 @@
     <WixVariable Id="WixUILicenseRtf" Value="installer\license.rtf" />
 
     <ComponentGroup Id="ProductComponents" Directory="INSTALLFOLDER">
-      <Component Id="RBPOAppExe" Guid="*">
+      <Component Id="RBPOAppExe" Guid="12345678-1234-1234-1234-123456789012">
         <File Id="RBPOAppExeFile" Name="rbpo-app.exe" Source="$(var.SourceDir)\rbpo-app.exe" KeyPath="yes" />
       </Component>
-      <Component Id="RBPOServiceExe" Guid="*">
+      <Component Id="RBPOServiceExe" Guid="12345678-1234-1234-1234-123456789013">
         <File Id="RBPOServiceExeFile" Name="rbpo-service.exe" Source="$(var.SourceDir)\rbpo-service.exe" KeyPath="yes" />
         <ServiceInstall Id="RBPOServiceInstall" Name="RBPOService" DisplayName="RBPO Service"
                         Type="ownProcess" Start="auto" ErrorControl="normal"

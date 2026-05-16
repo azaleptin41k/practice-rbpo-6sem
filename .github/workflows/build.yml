@@ -51,16 +51,18 @@ jobs:
         if: matrix.arch == 'x64'
         shell: pwsh
         run: |
-          $candle = (Get-ChildItem "C:\Program Files (x86)\WiX Toolset*\bin\candle.exe" -ErrorAction SilentlyContinue | Select-Object -First 1).FullName
+          $candle = (Get-Command "candle.exe" -ErrorAction SilentlyContinue).Source
           if (-not $candle) {
-            $candle = (Get-ChildItem "C:\Program Files\WiX Toolset*\bin\candle.exe" -ErrorAction SilentlyContinue | Select-Object -First 1).FullName
+            $candle = (Get-ChildItem "C:\Program Files (x86)\WiX Toolset*\bin\candle.exe" -ErrorAction SilentlyContinue | Select-Object -First 1).FullName
           }
           if (-not $candle) { Write-Error "candle.exe not found"; exit 1 }
-          $light = (Get-ChildItem "C:\Program Files (x86)\WiX Toolset*\bin\light.exe" -ErrorAction SilentlyContinue | Select-Object -First 1).FullName
+          $light = (Get-Command "light.exe" -ErrorAction SilentlyContinue).Source
           if (-not $light) {
-            $light = (Get-ChildItem "C:\Program Files\WiX Toolset*\bin\light.exe" -ErrorAction SilentlyContinue | Select-Object -First 1).FullName
+            $light = (Get-ChildItem "C:\Program Files (x86)\WiX Toolset*\bin\light.exe" -ErrorAction SilentlyContinue | Select-Object -First 1).FullName
           }
           if (-not $light) { Write-Error "light.exe not found"; exit 1 }
+          Write-Host "candle: $candle"
+          Write-Host "light:  $light"
           & $candle -arch x64 -dSourceDir="build\${{ matrix.build_type }}" -dVCRedistPath="$env:MSM_PATH" -o "installer\Product.wixobj" "installer\Product.wxs"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           & $light -ext WixUIExtension -o "build\${{ matrix.build_type }}\RBPO-Setup.msi" "installer\Product.wixobj"
