@@ -20,10 +20,10 @@
     <WixVariable Id="WixUILicenseRtf" Value="installer\license.rtf" />
 
     <ComponentGroup Id="ProductComponents" Directory="INSTALLFOLDER">
-      <Component Id="RBPOAppExe" Guid="12345678-1234-1234-1234-123456789012">
+      <Component Id="RBPOAppExe" Guid="39D16D67-9969-4793-A887-FCE2BC8E8FAC">
         <File Id="RBPOAppExeFile" Name="rbpo-app.exe" Source="$(var.SourceDir)\rbpo-app.exe" KeyPath="yes" />
       </Component>
-      <Component Id="RBPOServiceExe" Guid="12345678-1234-1234-1234-123456789013">
+      <Component Id="RBPOServiceExe" Guid="007ADAA1-33D5-4DC4-8BDB-4BBEDB80403B">
         <File Id="RBPOServiceExeFile" Name="rbpo-service.exe" Source="$(var.SourceDir)\rbpo-service.exe" KeyPath="yes" />
         <ServiceInstall Id="RBPOServiceInstall" Name="RBPOService" DisplayName="RBPO Service"
                         Type="ownProcess" Start="auto" ErrorControl="normal"
