@@ -402,12 +402,12 @@ static void WINAPI ServiceMain(DWORD, LPWSTR*)
     // NOTE: SERVICE_ACCEPT_STOP and SERVICE_ACCEPT_SHUTDOWN are deliberately omitted
     SetServiceStatus(g_hServiceStatus, &g_ServiceStatus);
 
-    // --- Requirement 4: start RPC server with TCP loopback transport ---------
+    // --- Requirement 4: start RPC server with ALPC transport -----------------
     RPC_STATUS rpcStatus;
     rpcStatus = RpcServerUseProtseqEpW(
-        reinterpret_cast<RPC_WSTR>(const_cast<wchar_t*>(L"ncacn_ip_tcp")),
+        reinterpret_cast<RPC_WSTR>(const_cast<wchar_t*>(L"ncalrpc")),
         RPC_C_PROTSEQ_MAX_REQS_DEFAULT,
-        reinterpret_cast<RPC_WSTR>(const_cast<wchar_t*>(L"4747")),
+        reinterpret_cast<RPC_WSTR>(const_cast<wchar_t*>(RBPO_RPC_ENDPOINT)),
         nullptr);
 
     RBPOLog("RpcServerUseProtseqEpW returned %d", rpcStatus);
