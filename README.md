@@ -20,6 +20,7 @@
 | **zad-2** | `rbpo-app.exe` + `rbpo-service.exe`: запуск GUI в пользовательских сессиях, RPC остановки по `ncalrpc` (ALPC). |
 | **zad-3** | Добавлены RPC для auth/license, JWT в памяти службы, HTTPS к `rbpo_backend`, GUI входа и активации продукта. |
 | **zad-4** | Антивирусный движок, сканирование файлов / директорий, все необязательные требования (см. ниже). |
+| **zad-5** | Хранение AV-баз на диске, проверка ЭЦП манифеста и записей, резервное копирование, обновление по расписанию (см. ниже). |
 
 ---
 
@@ -30,6 +31,7 @@
 | `src/service/service_main.cpp` | Точка входа службы, все RPC-реализации |
 | `src/service/state.cpp` | Auth/license workers, JWT-обновление |
 | `src/service/av_engine.h/cpp` | Антивирусный движок (zad-4) |
+| `src/service/av_db_io.h/cpp` | Бинарный формат AV-баз на диске (zad-5) |
 | `src/rpc/rbpo_rpc.idl` | IDL-интерфейс (MIDL → `rpc_gen/`) |
 | `src/main.cpp` | GUI (трей-приложение) |
 | `src/rbpo_rpc_constants.h` | Имена службы, endpoint, коды ошибок |
@@ -119,6 +121,78 @@ std::map<uint64_t, vector<AvRecord>>
 - Кнопки: «Скан файл», «Скан папку», «Скан все диски».
 - Секция расписания: поле пути, поле интервала (сек), «Установить» / «Сбросить» / «Результаты».
 - Секция мониторинга: поле пути, «Добавить» / «Удалить» / «Результаты».
+
+---
+
+## Хранение и обновление AV-баз (zad-5)
+
+### Бинарный формат на диске
+
+Два файла хранятся рядом с `rbpo-service.exe`:
+
+| Файл | Назначение |
+| ---- | ---------- |
+| `avdb.bin` | Основная база (RBDB v1) |
+| `avdb.manifest` | Манифест с HMAC-SHA256 и хэшем файла |
+| `avdb.bin.bak` / `avdb.manifest.bak` | Резервная копия (создаётся перед обновлением) |
+| `avdb.default.bin` / `avdb.default.manifest` | База по умолчанию (генерируется при первом запуске) |
+
+**Формат `avdb.bin` (RBDB v1):**
+
+```text
+[4]  magic 'R','B','D','B'
+[2]  version LE uint16 = 1
+[4]  record count LE uint32
+[2]  date UTF-8 length LE uint16
+[N]  date UTF-8
+[32] DataHash = SHA-256 всей секции записей
+---- секция записей ----
+для каждой записи:
+  [8]  prefix LE uint64
+  [4]  sigLen LE uint32
+  [1]  sigHash length (0 или 32)
+  [N]  sigHash bytes
+  [8]  offsetBegin LE int64
+  [8]  offsetEnd   LE int64
+  [1]  type (0=PE, 1=Script)
+  [1]  hasRemainderHash
+  [4]  sigBytes length LE uint32
+  [N]  sigBytes
+  [2]  threatName UTF-8 length LE uint16
+  [N]  threatName UTF-8
+  [32] RecordSig = SHA-256(prefix||sigLen||sigHash||offsetBegin||offsetEnd||type)
+```
+
+**Формат `avdb.manifest` (RBMF v1):**
+
+```text
+[4]  magic 'R','B','M','F'
+[2]  version LE uint16 = 1
+[32] FileHash = SHA-256 содержимого avdb.bin
+[32] ManifestSig = HMAC-SHA256(key, magic||version||FileHash)
+```
+
+### Логика загрузки при запуске
+
+```text
+1. Сгенерировать avdb.default.bin если отсутствует.
+2. Проверить HMAC-манифест avdb.manifest:
+   а. Успех → загрузить avdb.bin, проверить ЭЦП каждой записи,
+              невалидные пропустить.
+              Если пропущены записи + сеть доступна → принудительное обновление.
+   б. Неуспех + сеть + токен → принудительное обновление с backend.
+3. Если база не загружена → проверить avdb.manifest.bak → загрузить avdb.bin.bak.
+4. Если резервная копия недоступна → загрузить avdb.default.bin.
+```
+
+### Периодическое обновление
+
+- Фоновый поток стартует при запуске службы (`AvDbStartUpdate(3600)`).
+- Каждые 3600 с (при наличии access token):
+  1. Сохранить текущую базу в `avdb.bin.bak` / `avdb.manifest.bak`.
+  2. Загрузить свежие записи с `GET /api/signatures`.
+  3. Записать `avdb.bin` + `avdb.manifest`.
+  4. При ошибке записи — откатить базу из резервной копии.
 
 ---
 

@@ -436,6 +436,7 @@ static void WINAPI ServiceMain(DWORD, LPWSTR*)
     RBPOLog("Service RUNNING (before session launches)");
 
     rbpo::AvLoad();
+    rbpo::AvDbStartUpdate(3600);
 
     // --- Requirement 1: launch app in all existing active sessions -----------
     WTS_SESSION_INFOW* pSessions = nullptr;
