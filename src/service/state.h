@@ -34,4 +34,7 @@ int Activate(const std::wstring& activationKey, std::wstring& errorMessage);
 /* Used by license-gated RPC: returns RBPO_OK if a ticket is held, else RBPO_ERR_NO_LICENSE. */
 int LicenseGate();
 
+/* Returns a copy of the current access token (empty string if not authenticated). */
+std::string StateGetAccessToken();
+
 } // namespace rbpo

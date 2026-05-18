@@ -23,6 +23,7 @@
 #include "rbpo_rpc_constants.h"
 #include "state.h"
 #include "json_util.h"
+#include "av_engine.h"
 
 #pragma comment(lib, "wtsapi32.lib")
 #pragma comment(lib, "userenv.lib")
@@ -114,6 +115,8 @@ long RBPO_Login(const wchar_t* email, const wchar_t* password, wchar_t** errorMe
     std::wstring err;
     int rc = rbpo::Login(email ? email : L"", password ? password : L"", err);
     *errorMessage = RpcDupW(err);
+    if (rc == RBPO_OK)
+        rbpo::AvLoadFromBackend(rbpo::StateGetAccessToken());
     return rc;
 }
 
@@ -164,6 +167,102 @@ long RBPO_AVPing(wchar_t** message)
         return RBPO_ERR_NO_LICENSE;
     }
     *message = RpcDupW(L"AV module ready");
+    return RBPO_OK;
+}
+
+long RBPO_GetAvDbInfo(wchar_t** releaseDate, long* recordCount)
+{
+    rbpo::AvDbInfo info = rbpo::AvGetInfo();
+    *releaseDate  = RpcDupW(info.date);
+    *recordCount  = (long)info.count;
+    return RBPO_OK;
+}
+
+long RBPO_ScanFile(const wchar_t* filePath, long* detected, wchar_t** threatName)
+{
+    int gate = rbpo::LicenseGate();
+    if (gate != RBPO_OK) {
+        *detected   = 0;
+        *threatName = RpcDupW(L"No active license");
+        return RBPO_ERR_NO_LICENSE;
+    }
+    std::wstring threat;
+    bool found = rbpo::AvScanFile(filePath ? filePath : L"", threat);
+    *detected   = found ? 1 : 0;
+    *threatName = RpcDupW(threat);
+    RBPOLog("ScanFile '%ls': detected=%d threat=%ls",
+            filePath, *detected, threat.c_str());
+    return RBPO_OK;
+}
+
+long RBPO_ScanDirectory(const wchar_t* dirPath, wchar_t** results)
+{
+    int gate = rbpo::LicenseGate();
+    if (gate != RBPO_OK) {
+        *results = RpcDupW(L"No active license");
+        return RBPO_ERR_NO_LICENSE;
+    }
+    std::wstring res = rbpo::AvScanDirectory(dirPath ? dirPath : L"");
+    if (res.empty()) res = L"No threats detected";
+    *results = RpcDupW(res);
+    RBPOLog("ScanDirectory '%ls': result len=%zu", dirPath, res.size());
+    return RBPO_OK;
+}
+
+long RBPO_ScanAllDrives(wchar_t** results)
+{
+    int gate = rbpo::LicenseGate();
+    if (gate != RBPO_OK) {
+        *results = RpcDupW(L"No active license");
+        return RBPO_ERR_NO_LICENSE;
+    }
+    std::wstring res = rbpo::AvScanAllDrives();
+    *results = RpcDupW(res);
+    RBPOLog("ScanAllDrives: result len=%zu", res.size());
+    return RBPO_OK;
+}
+
+long RBPO_SetScanSchedule(const wchar_t* path, long intervalSeconds)
+{
+    int gate = rbpo::LicenseGate();
+    if (gate != RBPO_OK) return RBPO_ERR_NO_LICENSE;
+    rbpo::AvSetSchedule(path ? path : L"", intervalSeconds);
+    return RBPO_OK;
+}
+
+long RBPO_ClearScanSchedule()
+{
+    rbpo::AvClearSchedule();
+    return RBPO_OK;
+}
+
+long RBPO_GetScheduleResults(wchar_t** results, hyper* lastScanTimeUnix)
+{
+    int64_t t = 0;
+    std::wstring res = rbpo::AvGetScheduleResults(t);
+    *results         = RpcDupW(res);
+    *lastScanTimeUnix = (hyper)t;
+    return RBPO_OK;
+}
+
+long RBPO_AddMonitorDirectory(const wchar_t* path)
+{
+    int gate = rbpo::LicenseGate();
+    if (gate != RBPO_OK) return RBPO_ERR_NO_LICENSE;
+    rbpo::AvAddMonitorDirectory(path ? path : L"");
+    return RBPO_OK;
+}
+
+long RBPO_RemoveMonitorDirectory(const wchar_t* path)
+{
+    rbpo::AvRemoveMonitorDirectory(path ? path : L"");
+    return RBPO_OK;
+}
+
+long RBPO_GetMonitorResults(wchar_t** results)
+{
+    std::wstring res = rbpo::AvGetMonitorResults();
+    *results = RpcDupW(res);
     return RBPO_OK;
 }
 
@@ -336,6 +435,8 @@ static void WINAPI ServiceMain(DWORD, LPWSTR*)
     SetServiceStatus(g_hServiceStatus, &g_ServiceStatus);
     RBPOLog("Service RUNNING (before session launches)");
 
+    rbpo::AvLoad();
+
     // --- Requirement 1: launch app in all existing active sessions -----------
     WTS_SESSION_INFOW* pSessions = nullptr;
     DWORD sessionCount = 0;
@@ -361,6 +462,8 @@ static void WINAPI ServiceMain(DWORD, LPWSTR*)
     // --- Requirement 4: blocks until RpcMgmtStopServerListening is called ----
     rpcStatus = RpcServerListen(1, RPC_C_LISTEN_MAX_CALLS_DEFAULT, FALSE);
     RBPOLog("RpcServerListen returned %d", rpcStatus);
+
+    rbpo::AvShutdown();
 
     // --- Task 1.3: stop background workers -----------------------------------
     rbpo::StateShutdown();

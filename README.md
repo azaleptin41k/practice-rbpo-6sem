@@ -1,48 +1,138 @@
 # РБПО — Windows-клиент (трей и служба)
 
-Учебный репозиторий с **ветками по заданиям**: от базового трей-приложения до связки со службой, локальным RPC (ALPC) и HTTPS к вашему API.
+Учебный репозиторий с **ветками по заданиям**: от базового трей-приложения до связки со службой, локальным RPC (ALPC), HTTPS к REST API и антивирусным движком.
 
-Это **клиентская** часть стека. Сервер REST/JWT и лицензий — Java‑проект **`rbpo_backend`** (Spring Boot). Имеет смысл клонировать его рядом, например:
+Это **клиентская** часть стека. Сервер REST/JWT и лицензий — Java‑проект **`rbpo_backend`** (Spring Boot).
 
 ```text
-~/Documents/rbpo_prac      ← этот репозиторий (клиент / «фронт» окон и службы)
+~/Documents/rbpo_prac      ← этот репозиторий (служба + GUI)
 ~/Documents/rbpo_backend   ← бэкенд API
 ```
-
-Дальше в README слово «бэкенд» относится именно к **`rbpo_backend`**.
-
----
-
-## Связь клиента с бэкендом
-
-Бэкенд описан в своём `README.md`; кратко про контракт:
-
-| Назначение | Бэкенд (типично) | Примечание для `TraySvc` (ветка zad-3) |
-| ---------- | ---------------- | -------------------------------------- |
-| Логин | `POST /api/auth/login`, тело `username` / `password` | Ответ JSON: **`accessToken`**, **`refreshToken`**. В коде службы поддержаны и camelCase, и `access_token` / `refresh_token`. |
-| Обновление JWT | `POST /api/auth/refresh`, тело **`refreshToken`** | Тело запроса приведено к формату Spring `RefreshRequest`. |
-| Лицензия | `POST /api/licenses/activate`, `check`, `renew` и т.д. | Ответ — **`TicketResponse`** (`ticket` + `signature`). Упрощённый парсер в службе и заглушка GET «status» не эквивалентны продакшен‑контракту; для полной стыковки нужна доработка разбора JSON под `Ticket`/`TicketResponse`. |
-
-Порт по умолчанию у бэкенда — **8081**. Константы URL задаются в `include/tray_zad3_api.h` (файл есть на ветке **zad-3**).
-
-HTTPS: клиент WinHTTP ожидает схему **https**. Включите TLS у Spring Boot (`SSL_ENABLED=true` и keystore в `application.properties`) или используйте reverse‑proxy с TLS.
-
-Режим **`RBPO_SIMULATE_HTTP=1`** в сборке `TraySvc` (по умолчанию в CMake на **zad-3**) позволяет проверять задание без живого сервера.
 
 ---
 
 ## Ветки и содержание
 
-Репозиторий разбит на этапы по веткам: сначала автономный клиент с треем, затем служба с RPC, затем HTTPS/JWT и интеграция с REST API **`rbpo_backend`**. Состав каталогов и целей CMake на каждой ветке свой — ориентируйтесь на таблицу.
-
 | Ветка | Что внутри |
 | ----- | ----------- |
-| **main** | Точка входа по документации; исходники клиента смотрите на рабочих ветках ниже. |
-| **zad-1** | Один **`rbpo-app.exe`**: трей, ресурсы (`.rc`, иконка), меню «Файл → Выход», single-instance, CMake, GitHub Actions. Без службы и без HTTP к бэкенду. |
-| **zad-2** | **`rbpo-app.exe`** (трей, как на **zad-1**) и **`TraySvc.exe`**: запуск GUI в пользовательских сессиях, RPC остановки по **ncalrpc** (ALPC), перезапуск иконки при `TaskbarCreated`. Имена — в `include/tray_config.h` (`RbpoTrayZad2Svc` …). |
-| **zad-3** | Развитие zad-2: второй интерфейс RPC (**TrayZad3**), JWT/лицензия в памяти службы, HTTPS или симуляция, GUI входа и активации. Имена **`RbpoTrayZad3Svc`**, см. `idl/TrayZad3.idl`. |
+| **main** | Актуальный код после слияния zad-1 … zad-4. |
+| **zad-1** | `rbpo-app.exe`: трей, иконка, меню, single-instance, CMake, GitHub Actions. |
+| **zad-2** | `rbpo-app.exe` + `rbpo-service.exe`: запуск GUI в пользовательских сессиях, RPC остановки по `ncalrpc` (ALPC). |
+| **zad-3** | Добавлены RPC для auth/license, JWT в памяти службы, HTTPS к `rbpo_backend`, GUI входа и активации продукта. |
+| **zad-4** | Антивирусный движок, сканирование файлов / директорий, все необязательные требования (см. ниже). |
 
-Для проверки конкретного этапа переключите ветку и пересоберите.
+---
+
+## Ключевые файлы
+
+| Файл | Назначение |
+| ---- | ---------- |
+| `src/service/service_main.cpp` | Точка входа службы, все RPC-реализации |
+| `src/service/state.cpp` | Auth/license workers, JWT-обновление |
+| `src/service/av_engine.h/cpp` | Антивирусный движок (zad-4) |
+| `src/rpc/rbpo_rpc.idl` | IDL-интерфейс (MIDL → `rpc_gen/`) |
+| `src/main.cpp` | GUI (трей-приложение) |
+| `src/rbpo_rpc_constants.h` | Имена службы, endpoint, коды ошибок |
+
+Имя службы: **`RBPOService`**. RPC transport: `ncalrpc`, endpoint `RBPOServiceEndpoint`.
+
+---
+
+## Антивирусный движок (zad-4)
+
+### Структура AV-базы в оперативной памяти
+
+```text
+std::map<uint64_t, vector<AvRecord>>
+  ключ   — ObjectSignaturePrefix (первые 8 байт сигнатуры, little-endian uint64)
+  значение — массив записей AvRecord:
+    prefix        (8 байт)  — первые 8 байт сигнатуры
+    sigLen        (4 байта) — полная длина сигнатуры
+    sigHash              — SHA-256 всех байт сигнатуры (BCrypt)
+    offsetBegin   (8 байт) — начало допустимого диапазона позиции (-1 = любая)
+    offsetEnd     (8 байт) — конец допустимого диапазона позиции (-1 = любая)
+    type          (1 байт) — ObjectType: PE=0, Script=1
+    recordSig            — SHA-256 всех вышеперечисленных полей (ЭЦП)
+```
+
+`std::map` реализован как красно-чёрное дерево → поиск по префиксу O(log K).
+
+### Алгоритм сканирования (обязательный, п.3)
+
+1. Позиция чтения = 0.
+2. Считать 8 байт → поиск по ключу в `std::map` (O(log K)).
+3. Для каждой найденной записи (от дешёвой проверки к дорогой):
+   - 3.3.1 Тип объекта совпадает с `ObjectType`?
+   - 3.3.2 Позиция попадает в `[OffsetBegin, OffsetEnd]`?
+   - 3.3.3 Считать ещё `sigLen − 8` байт.
+   - 3.3.4 Вычислить SHA-256(prefix_bytes || extra_bytes).
+   - 3.3.5 Сравнить хэш с `ObjectSignature`.
+4. Несовпавшие записи исключаются; если список пуст — сдвиг на 1 байт, goto 2.
+5. Если осталась хоть одна запись — объект вредоносен.
+
+### Алгоритм Ахо-Корасика (необязательный, доп. баллы)
+
+При загрузке базы (`AvLoad`) дополнительно строится автомат из реальных байтов всех сигнатур. `ScanStream` использует AC для одного прохода по файлу O(N + M) вместо O(N log K), проверяя type и offset при совпадении.
+
+### Определение типа файла
+
+| Условие | Тип |
+| ------- | --- |
+| Расширение `.py`, `.ps1`, `.js`, `.vbs` | Script |
+| Первые байты `MZ` | PE |
+| Иначе | Script |
+
+### Тестовые сигнатуры
+
+| Сигнатура (16 байт) | Тип | Детект |
+| ------------------- | --- | ------ |
+| `RBPOTESTVRS1.000` | PE | Файл содержит эту последовательность + MZ-заголовок |
+| `#RBPOTESTVRS2.00` | Script | Файл содержит эту последовательность + расширение .py/.ps1 |
+
+### RPC-методы (зарегистрированы в `RBPOServiceRpc`)
+
+**Обязательные:**
+
+| Метод | Описание |
+| ----- | -------- |
+| `RBPO_GetAvDbInfo` | Дата выпуска базы + кол-во записей |
+| `RBPO_ScanFile` | Сканирование одного файла |
+| `RBPO_ScanDirectory` | Рекурсивное сканирование директории |
+
+**Необязательные:**
+
+| Метод | Описание |
+| ----- | -------- |
+| `RBPO_ScanAllDrives` | Сканирование всех несъёмных дисков (`DRIVE_FIXED`) |
+| `RBPO_SetScanSchedule` | Установить расписание (путь + интервал в секундах) |
+| `RBPO_ClearScanSchedule` | Сбросить расписание |
+| `RBPO_GetScheduleResults` | Результаты последнего планового сканирования + timestamp |
+| `RBPO_AddMonitorDirectory` | Начать мониторинг директории (`ReadDirectoryChangesW`) |
+| `RBPO_RemoveMonitorDirectory` | Остановить мониторинг |
+| `RBPO_GetMonitorResults` | Результаты мониторинга (файлы, обнаруженные при создании/изменении) |
+
+Сканирующие методы защищены `LicenseGate()` — требуют активной лицензии.
+
+### GUI (лицензионная панель)
+
+- Метка с датой базы и количеством записей.
+- Кнопки: «Скан файл», «Скан папку», «Скан все диски».
+- Секция расписания: поле пути, поле интервала (сек), «Установить» / «Сбросить» / «Результаты».
+- Секция мониторинга: поле пути, «Добавить» / «Удалить» / «Результаты».
+
+---
+
+## Связь с бэкендом
+
+Порт по умолчанию **8081** (HTTP). Переопределение: env-переменные `RBPO_BACKEND_HOST`, `RBPO_BACKEND_PORT`, `RBPO_BACKEND_USE_TLS`.
+
+| Endpoint | Назначение |
+| -------- | ---------- |
+| `POST /api/auth/login` | Логин (тело: `username` / `password`) |
+| `POST /api/auth/refresh` | Обновление JWT |
+| `GET /api/auth/me` | Профиль пользователя |
+| `POST /api/licenses/activate` | Активация ключа |
+| `POST /api/licenses/check` | Проверка лицензии |
 
 ---
 
@@ -53,22 +143,24 @@ cmake -B build -G "Visual Studio 17 2022" -A x64
 cmake --build build --config Release
 ```
 
-На **zad-1**: `build/Release/rbpo-app.exe`. На **zad-2**: те же **`rbpo-app.exe`** и **`TraySvc.exe`** рядом. На **zad-3**: `build/Release/TrayApp.exe`, `build/Release/TraySvc.exe` (уточняйте по `CMakeLists.txt` на ветке).
+Артефакты: `build/Release/rbpo-app.exe`, `build/Release/rbpo-service.exe`. Оба exe должны лежать в **одном каталоге**.
 
-На не‑Windows CMake цели клиента не добавляет (только сообщение в конфигурации).
-
-### Установка службы (zad-2 / zad-3)
-
-Имя службы возьмите из `include/tray_config.h` на вашей ветке. Пример для zad-3:
+### Установка службы
 
 ```bat
-sc create RbpoTrayZad3Svc binPath= "C:\полный\путь\TraySvc.exe" start= demand DisplayName= "RBPO Tray Zad3"
+sc create RBPOService binPath= "C:\path\to\rbpo-service.exe" start= demand DisplayName= "RBPO Service"
+sc start RBPOService
 ```
 
-Оба exe должны лежать в **одном каталоге**.
+### Удаление службы
+
+```bat
+sc stop RBPOService
+sc delete RBPOService
+```
 
 ---
 
 ## CI
 
-На ветках **`zad-1`**, **`zad-2`**, **`zad-3`** в репозитории есть workflow GitHub Actions (файл `.github/workflows/build.yml`): сборка на `windows-latest`, артефакты с собранными exe. На **`main`** может находиться только этот README.
+Workflow `.github/workflows/build.yml` собирает оба exe на `windows-latest` и публикует артефакты.
