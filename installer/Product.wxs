@@ -21,7 +21,7 @@
 
     <!-- Launch GUI after MSI install completes -->
     <Property Id="WixShellExecTarget" Value="[#RBPOAppExeFile]" />
-    <CustomAction Id="LaunchApp" BinaryKey="WixCA" DllEntry="WixShellExec" Impersonate="yes" Execute="commit" Return="asyncNoWait" />
+    <CustomAction Id="LaunchApp" BinaryKey="WixCA" DllEntry="WixShellExec" Impersonate="yes" Return="asyncNoWait" />
 
     <InstallExecuteSequence>
       <Custom Action="LaunchApp" After="InstallFinalize">NOT Installed</Custom>
@@ -37,7 +37,7 @@
                         Type="ownProcess" Start="auto" ErrorControl="normal"
                         Account="NT AUTHORITY\SYSTEM" />
         <ServiceControl Id="RBPOServiceControl" Name="RBPOService"
-                        Start="none" Stop="both" Remove="uninstall" Wait="yes" />
+                        Stop="both" Remove="uninstall" Wait="yes" />
       </Component>
     </ComponentGroup>
 
