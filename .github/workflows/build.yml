@@ -115,7 +115,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
           # Link
-          & $light -ext WixUIExtension `
+          & $light -ext WixUIExtension -ext WixUtilExtension `
             -o "build\${{ matrix.build_type }}\RBPO-Setup.msi" `
             "installer\Product.wixobj" "installer\QtFiles.wixobj"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
