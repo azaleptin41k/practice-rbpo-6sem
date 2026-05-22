@@ -21,7 +21,7 @@
 
     <!-- Launch GUI after MSI install completes -->
     <Property Id="WixShellExecTarget" Value="[#RBPOAppExeFile]" />
-    <CustomAction Id="LaunchApp" BinaryKey="WixCA" DllEntry="WixShellExec" Impersonate="yes" Return="asyncNoWait" />
+    <CustomAction Id="LaunchApp" BinaryKey="WixCA" DllEntry="WixShellExec" Impersonate="yes" />
 
     <InstallExecuteSequence>
       <Custom Action="LaunchApp" After="InstallFinalize">NOT Installed</Custom>
