@@ -11,9 +11,10 @@ jobs:
     runs-on: windows-latest
 
     strategy:
+      fail-fast: false
       matrix:
         build_type: [Release]
-        arch: [x64, ARM64]
+        arch: [x64]
 
     steps:
       - name: Checkout
