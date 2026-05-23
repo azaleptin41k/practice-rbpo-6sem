@@ -2,7 +2,7 @@ name: Build
 
 on:
   push:
-    branches: [ main, master, zad-1, zad-2, zad-3 ]
+    branches: [ main, master, zad-1, zad-2, zad-3, zad-4, zad-5 ]
   pull_request:
     branches: [ main, master ]
 

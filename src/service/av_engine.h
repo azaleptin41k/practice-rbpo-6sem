@@ -23,6 +23,8 @@ struct AvRecord {
     std::vector<uint8_t> sigBytes;
     bool                 hasRemainderHash = false;
     std::wstring         threatName;
+    std::string          id;
+    std::vector<uint8_t> rsaSig;
 };
 
 struct AvDbInfo {
@@ -45,5 +47,8 @@ std::wstring AvGetScheduleResults(int64_t& lastScanTimeUnix);
 void         AvAddMonitorDirectory(const std::wstring& path);
 void         AvRemoveMonitorDirectory(const std::wstring& path);
 std::wstring AvGetMonitorResults();
+
+void         AvDbStartUpdate(long intervalSeconds);
+void         AvDbStopUpdate();
 
 } // namespace rbpo
