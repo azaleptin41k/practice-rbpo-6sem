@@ -44,4 +44,30 @@ interface RBPOServiceRpc
      * returns 0 on success; non-zero ERROR_NO_LICENSE if ticket missing
      */
     long RBPO_AVPing([out, string] wchar_t** message);
+
+    long RBPO_GetAvDbInfo([out, string] wchar_t** releaseDate,
+                          [out] long* recordCount);
+
+    long RBPO_ScanFile([in, string] const wchar_t* filePath,
+                       [out] long* detected,
+                       [out, string] wchar_t** threatName);
+
+    long RBPO_ScanDirectory([in, string] const wchar_t* dirPath,
+                            [out, string] wchar_t** results);
+
+    long RBPO_ScanAllDrives([out, string] wchar_t** results);
+
+    long RBPO_SetScanSchedule([in, string] const wchar_t* path,
+                               [in] long intervalSeconds);
+
+    long RBPO_ClearScanSchedule();
+
+    long RBPO_GetScheduleResults([out, string] wchar_t** results,
+                                  [out] hyper* lastScanTimeUnix);
+
+    long RBPO_AddMonitorDirectory([in, string] const wchar_t* path);
+
+    long RBPO_RemoveMonitorDirectory([in, string] const wchar_t* path);
+
+    long RBPO_GetMonitorResults([out, string] wchar_t** results);
 }

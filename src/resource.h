@@ -27,6 +27,21 @@
 #define IDC_AV_BUTTON      50106
 #define IDC_LOGOUT_BUTTON  50107
 
+// Child control IDs (AV scanning — licensed pane)
+#define IDC_AV_DB_LABEL        50108
+#define IDC_SCAN_FILE_BTN      50109
+#define IDC_SCAN_DIR_BTN       50110
+#define IDC_SCAN_ALL_DRIVES    50111
+#define IDC_SCHED_PATH_EDIT    50112
+#define IDC_SCHED_INTV_EDIT    50113
+#define IDC_SCHED_SET_BTN      50114
+#define IDC_SCHED_CLEAR_BTN    50115
+#define IDC_SCHED_RESULTS_BTN  50116
+#define IDC_MON_PATH_EDIT      50117
+#define IDC_MON_ADD_BTN        50118
+#define IDC_MON_REMOVE_BTN     50119
+#define IDC_MON_RESULTS_BTN    50120
+
 // Custom window messages
 #define WM_TRAYICON      (WM_USER + 1)
 #define IDT_POLL_TIMER   1
