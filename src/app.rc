@@ -5,8 +5,10 @@ IDI_APPICON ICON "logo.ico"
 
 IDR_MAINMENU MENU
 BEGIN
-  POPUP "Файл"
-  BEGIN
-    MENUITEM "Выход", ID_FILE_EXIT
-  END
+    POPUP "Файл"
+    BEGIN
+        MENUITEM "Выход из учётной записи", ID_FILE_LOGOUT
+        MENUITEM SEPARATOR
+        MENUITEM "Выход", ID_FILE_EXIT
+    END
 END
