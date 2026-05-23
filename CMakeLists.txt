@@ -4,6 +4,9 @@ project(rbpo-app VERSION 1.0 LANGUAGES C CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+find_package(Qt6 REQUIRED COMPONENTS Widgets)
+set(CMAKE_AUTORCC ON)
+
 # ---------------------------------------------------------------------------
 # Convert logo.png → src/logo.ico at configure time (Windows + PowerShell)
 # ---------------------------------------------------------------------------
@@ -89,6 +92,7 @@ add_custom_target(rpc_stubs DEPENDS "${RPC_HEADER}" "${RPC_CLIENT}" "${RPC_SERVE
 add_executable(${PROJECT_NAME} WIN32
     src/main.cpp
     src/app.rc
+    src/app.qrc
     "${RPC_CLIENT}"
 )
 
@@ -101,7 +105,7 @@ target_compile_definitions(${PROJECT_NAME} PRIVATE UNICODE _UNICODE)
 # UTF-8 source and execution character set (for Cyrillic strings)
 target_compile_options(${PROJECT_NAME} PRIVATE $<$<CXX_COMPILER_ID:MSVC>:/utf-8>)
 
-target_link_libraries(${PROJECT_NAME} PRIVATE shell32 rpcrt4 advapi32 ole32 comdlg32)
+target_link_libraries(${PROJECT_NAME} PRIVATE Qt6::Widgets rpcrt4 advapi32)
 
 # ---------------------------------------------------------------------------
 # Windows Service target
